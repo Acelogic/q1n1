@@ -1,5 +1,12 @@
 RUSTARCH ?= aarch64-unknown-none-softfloat
 
+# Qualcomm/UEFI bring-up is deliberately separate from the Apple object graph.
+.PHONY: uefi
+uefi:
+	$(MAKE) -f platform/uefi/Makefile
+
+.DEFAULT_GOAL := all
+
 ifeq ($(shell uname),Darwin)
 USE_CLANG ?= 1
 $(info INFO: Building on Darwin)

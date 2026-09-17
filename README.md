@@ -1,4 +1,75 @@
-# m1n1: A bootloader and experimentation playground for Apple Silicon
+# q1n1: m1n1 on a Snapdragon laptop
+
+A fork of [m1n1](https://github.com/AsahiLinux/m1n1) retargeted from Apple
+Silicon to the ASUS Zenbook A16 (UX3607OA / Snapdragon X2E-96-100). Where m1n1
+is loaded by iBoot, q1n1 is a UEFI application: firmware loads it, it takes the
+machine at EL2 after `ExitBootServices`, and then serves m1n1's proxy protocol
+so a host can drive the hardware interactively.
+
+**[Installation and usage →](docs/A16-INSTALL.md)**
+
+## What works
+
+- **EL2 after ExitBootServices** on real hardware, with a framebuffer console.
+  Entered directly, without slbounce. See the
+  [first hardware boot record](docs/A16-FIRST-EL2-BOOT.md).
+- **The m1n1 proxy protocol at EL2** over USB, with guarded MMIO access, memory
+  transfer and code upload, so the usual m1n1 host-side idioms work.
+- **Boot control**: `tools/a16ctl.py` boots the laptop into q1n1 from Windows,
+  from its boot window, or from q1n1 itself — a q1n1-to-q1n1 restart never
+  passes through Windows. Windows stays first in the firmware boot order and a
+  failed payload falls back to it.
+- **Chainloading**: replace the running EL2 code in ~0.2 s without rebooting,
+  which is what makes this iterable at all.
+- **Its own USB stack, both directions.** q1n1 drives the USB0 DWC3 as a device
+  to serve a CDC ACM console, and drives the USB1 xHCI as a *host* to enumerate
+  the Mac at the other end of a bare C-to-C cable as a CDC-NCM adapter. The
+  proxy then runs over that link as UDP over IPv6 link-local, unprivileged and
+  with no dock in the path — 4.6 MB/s write, 8.5 MB/s read.
+- **UCSI 2.1** register access and connector queries.
+
+Not yet: the guest hypervisor, SMP, or any Apple-specific drivers.
+
+## Records
+
+Each piece has a written record of how it was established, including the things
+that turned out to be wrong:
+
+| | |
+| --- | --- |
+| [A16-INSTALL.md](docs/A16-INSTALL.md) | build, install, boot, connect, recover |
+| [A16-Q1N1-PROXY.md](docs/A16-Q1N1-PROXY.md) | EL2 proxy, boot control, xHCI/NCM, the UDP transport |
+| [A16-FIRST-EL2-BOOT.md](docs/A16-FIRST-EL2-BOOT.md) | first EL2 execution on hardware |
+| [A16-USB-EL2-SERIAL.md](docs/A16-USB-EL2-SERIAL.md) | USB after ExitBootServices |
+| [A16-USB-DOCK.md](docs/A16-USB-DOCK.md) | CDC ACM serial through the dock |
+| [A16-UCSI-REGISTERS.md](docs/A16-UCSI-REGISTERS.md) | USB-C transport and data-role experiments |
+| [A16-BOOT.md](docs/A16-BOOT.md) | boot and serial guide |
+
+## Build
+
+```shell
+make uefi        # build/uefi/q1n1.efi and the chainloadable stages
+```
+
+Then run the tests — QEMU boots the real binary to EL2, and three native suites
+run the drivers against simulators under sanitizers:
+
+```shell
+python3 tools/test-uefi.py --proxy
+python3 tools/test-q1n1-proxy.py
+python3 tools/test-q1n1-xhci.py
+python3 tools/test-q1n1-ncmproxy.py
+```
+
+## Credit
+
+This is a fork of the [Asahi Linux](https://asahilinux.org/) project's m1n1. The
+proxy protocol, the host client structure and most of the tree are theirs; MIT
+licence inherited. Upstream's README follows.
+
+The original m1n1 build and its upstream documentation remain below.
+
+## Upstream m1n1: A bootloader and experimentation playground for Apple Silicon
 
 ## Building
 
