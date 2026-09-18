@@ -5,7 +5,7 @@ q1n1 is a fork of m1n1 retargeted from Apple Silicon to the ASUS Zenbook A16
 takes the machine at EL2 after `ExitBootServices`, and it serves m1n1's proxy
 protocol so a host can drive the hardware interactively.
 
-`CLAUDE.md` and `GEMINI.md` are symlinks to this file.
+This file is the one place for it. There are no per-tool copies or symlinks.
 
 ## Two trees, one repository
 
