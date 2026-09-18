@@ -1,0 +1,73 @@
+# The UEFI/EL2 payload -- this fork's actual work. The other workflows cover the
+# retained Apple Silicon tree, which nothing here touches.
+name: q1n1
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: q1n1.efi, native suites, QEMU EL2
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The UEFI Makefile prefers a Homebrew LLVM and falls back to whatever is
+      # on PATH, so clang/lld-link/ld.lld/llvm-objcopy from apt is enough. The
+      # PE link needs lld-link specifically; the chainloadable stages need ld.lld.
+      - name: Install LLVM, lld and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            clang lld llvm qemu-system-arm qemu-efi-aarch64
+
+      - name: Build the payload and the chainloadable stages
+        run: make uefi
+
+      # Each of these links a driver against a register model and runs it under
+      # ASan/UBSan. No firmware, no physical MMIO, so they run anywhere.
+      - name: Native suites (sanitizers)
+        run: |
+          python3 tools/test-q1n1-proxy.py
+          python3 tools/test-q1n1-xhci.py
+          python3 tools/test-q1n1-ncmproxy.py
+
+      - name: USB1 device fallback and EP0 identity
+        run: |
+          set -e
+          clang -std=gnu11 -O1 -g -fsanitize=address,undefined \
+            -Wall -Wextra -Werror -Iplatform/uefi \
+            tools/test-usb1-device.c platform/uefi/usb1-device.c -o /tmp/test-usb1-device
+          /tmp/test-usb1-device
+          clang -std=gnu11 -O1 -g -fsanitize=address,undefined \
+            -Wall -Wextra -Werror -Iplatform/uefi \
+            tools/test-qdwc3-identity.c -o /tmp/test-qdwc3-identity
+          /tmp/test-qdwc3-identity
+
+      # Boots the binary that was just built to EL2 and drives the real proxy
+      # protocol over it, including two chainloads. The firmware lands in
+      # different places depending on which package supplied it, so find it.
+      - name: QEMU EL2 proxy
+        run: |
+          set -e
+          for fd in /usr/share/AAVMF/AAVMF_CODE.no-secboot.fd \
+                    /usr/share/AAVMF/AAVMF_CODE.fd \
+                    /usr/share/qemu/edk2-aarch64-code.fd \
+                    /usr/share/edk2/aarch64/QEMU_EFI.fd; do
+            if [ -f "$fd" ]; then
+              FIRMWARE="$fd"
+              break
+            fi
+          done
+          if [ -z "${FIRMWARE:-}" ]; then
+            echo "no aarch64 EDK2 firmware found; looked in:" >&2
+            ls -la /usr/share/AAVMF /usr/share/qemu 2>/dev/null >&2 || true
+            exit 1
+          fi
+          echo "firmware: $FIRMWARE"
+          python3 tools/test-uefi.py --proxy --firmware "$FIRMWARE"
