@@ -2,8 +2,8 @@
 
 Generated with the built-in image generation tool on 2026-09-16.
 `dragon-source.png` is the original generated asset. The standalone PNGs in
-`data/bootlogo_{48,128,256}.png` and corresponding RGBA `.bin` files replace the
-fork's boot logo; they no longer point into the upstream artwork submodule.
+`data/bootlogo_{48,128,256}.png` and corresponding RGBA `.bin` files are the
+fork's boot logo. Nothing here depends on upstream artwork.
 
 Prompt:
 

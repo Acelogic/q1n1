@@ -163,8 +163,8 @@ m1n1 embeds portions of [musl-libc](https://musl.libc.org/)'s floating point lib
 
 m1n1 embeds some rust crates. Licenses can be found in the vendor directory for every crate.
 
-The Asahi Linux logomark, embedded for `--logo asahi` and in the `artwork`
-submodule, is copyright (c) 2021 soundflora* and Hector Martin, and is used to
-reference the Asahi Linux project rather than to represent this fork. q1n1's own
-dragon emblem is an original mark for this project and is not the official
+The Asahi Linux logomark, embedded as `data/asahi_bootlogo_256.bin` for
+`--logo asahi`, is copyright (c) 2021 soundflora* and Hector Martin, and is used
+to reference the Asahi Linux project rather than to represent this fork. q1n1's
+own dragon emblem is an original mark for this project and is not the official
 Qualcomm or Snapdragon logo.
