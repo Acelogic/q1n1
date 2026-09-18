@@ -10,3 +10,8 @@ __pycache__
 .idea
 .DS_Store
 .pytest_cache/
+
+# Per-tool pointers at AGENTS.md. Handy locally, not worth committing three
+# names for one file -- make them with: ln -s AGENTS.md CLAUDE.md
+CLAUDE.md
+GEMINI.md
