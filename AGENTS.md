@@ -33,10 +33,23 @@ python3 tools/test-q1n1-ncmproxy.py
 ```
 
 The native suites link a driver against a register model — no firmware, no
-physical MMIO — so they run anywhere. Two more are compiled ad hoc; see
-`.github/workflows/q1n1.yml` for the exact lines.
+physical MMIO — so they run anywhere. Two more have no runner and are compiled
+directly:
+
+```shell
+clang -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror \
+  -Iplatform/uefi tools/test-usb1-device.c platform/uefi/usb1-device.c \
+  -o /tmp/test-usb1-device && /tmp/test-usb1-device
+
+clang -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror \
+  -Iplatform/uefi tools/test-qdwc3-identity.c \
+  -o /tmp/test-qdwc3-identity && /tmp/test-qdwc3-identity
+```
 
 `-Werror` is on for both the PE and the stage builds. A warning is a failure.
+
+There is no CI. Everything here is built and run locally, so nothing else will
+catch a break for you — run the suites before calling a change done.
 
 ## Header dependencies matter more than usual
 
