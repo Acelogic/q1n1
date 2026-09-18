@@ -37,6 +37,8 @@
 #define DWC3_DSTS 0xc70c
 #define DWC3_DSTS_DEVCTRLHLT (1u << 22)
 #define DWC3_DSTS_CONNECTSPD 7u
+#define DWC3_DSTS_USBLNKST_SHIFT 18
+#define DWC3_LINK_DISCONNECTED 4u
 #define DWC3_DALEPENA 0xc720
 #define DWC3_DALEPENA_EP(n) (1u << (n))
 #define DWC3_DEPCMDPAR2(n) (0xc800 + (n) * 16)
@@ -162,7 +164,6 @@ static const uint8_t config_descriptor[] = {
 _Static_assert(sizeof(config_descriptor) == 97, "CDC configuration length");
 static const uint8_t languages[4] = {4, 3, 0x09, 0x04};
 static const char *const strings[] = {"q1n1", "q1n1 A16 EL2 serial", "A16-Q1N1-EL2"};
-static uint8_t string_buffer[64];
 
 static int ep_command(struct qdwc3 *d, uint8_t ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
 {
@@ -231,8 +232,12 @@ static int get_descriptor(struct qdwc3 *d, uint16_t value, uint16_t length)
     else if (type == 3 && index == 0) { p = languages; n = sizeof(languages); }
     else if (type == 3 && index <= 3) {
         const char *s = strings[index - 1];
+        /* USB1 can serve a direct cable while USB0 serves the dock. Duplicate
+         * serials configure successfully but collide in macOS's tty names. */
+        if (index == 3 && d->regs == 0x0a800000) s = "A16-Q1N1-EL2B";
+        uint8_t *string_buffer = d->string_buffer;
         n = 2;
-        while (*s && n + 2 <= sizeof(string_buffer)) { string_buffer[n++] = (uint8_t)*s++; string_buffer[n++] = 0; }
+        while (*s && n + 2 <= sizeof(d->string_buffer)) { string_buffer[n++] = (uint8_t)*s++; string_buffer[n++] = 0; }
         string_buffer[0] = (uint8_t)n; string_buffer[1] = 3;
         p = string_buffer;
     }
@@ -464,6 +469,26 @@ size_t qdwc3_write(struct qdwc3 *d, unsigned pipe, const uint8_t *buffer, size_t
     return n;
 }
 int qdwc3_ready(const struct qdwc3 *d, unsigned pipe) { return pipe < QDWC3_PIPES && d->pipe[pipe].ready; }
+
+/* Has the cable physically gone away?
+ *
+ * `stats.configured` cannot answer this. Device mode needs the session-valid
+ * override below (SW_SESSVLD_SEL), which tells the controller VBUS is present
+ * whatever the cable is doing, so a real unplug raises no disconnect event and
+ * the flag stays set forever. On USB0 that is harmless -- the dock is the only
+ * thing that link ever talks to. On USB1 it wedged the machine: the borrowed
+ * host controller was never released, so nothing re-probed and only a power
+ * cycle recovered it.
+ *
+ * The link state machine still follows the bus, so it is the one signal that
+ * reflects reality. Callers debounce: the link passes through Disconnected
+ * briefly during normal enumeration. */
+int qdwc3_link_down(const struct qdwc3 *d)
+{
+    if (!d->regs) return 0;
+    uint32_t state = (qdwc3_rd(d->regs + DWC3_DSTS) >> DWC3_DSTS_USBLNKST_SHIFT) & 0xf;
+    return state == DWC3_LINK_DISCONNECTED;
+}
 
 static void restore(struct qdwc3 *d, uint32_t off, uint32_t value, uint32_t bit)
 {

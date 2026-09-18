@@ -16,6 +16,7 @@
 #include "xhci.h"
 #include "ncm.h"
 #include "ncm-proxy.h"
+#include "usb1-device.h"
 #include "q1n1-bootinfo.h"
 #include "boot-window.h"
 #include "q1n1-proxy.h"
@@ -90,12 +91,21 @@ static int ncm_link_up(void);
 #define ncm_proxy_link (usb_state->proxy)
 /* The multiplexer's second transport, published once the NCM link is up. */
 static const struct q1n1_io *dual_second;
+static struct usb1_device direct_device;
+static uint64_t host_idle_since, direct_deadline, direct_activity, direct_down_since;
+static int direct_try(void);
+static void direct_stop(void);
+static void direct_maintain(void);
 
 static uint64_t stage_config;       /* logo choice etc., patched into a stage image */
 extern const uint8_t q1n1_asahi_logo[];
-#define LOGO_ASAHI_CENTRE 0
-#define LOGO_Q1N1_CORNER 1
+/* The low two bits of the config word. The dragon is the default: centred where
+ * m1n1 puts its logo, or parked in a corner per generation so a chainload is
+ * visible at a glance. The upstream Asahi mark remains selectable. */
+#define LOGO_CENTRE 0
+#define LOGO_CORNER 1
 #define LOGO_NONE 2
+#define LOGO_ASAHI 3
 /* Bit 2 of the stage config word: bring up USB1 as an xHCI host and open the
  * NCM link over it. Opt-in, so an ordinary stage behaves exactly as before. */
 #define STAGE_XHCI 4
@@ -107,11 +117,10 @@ extern const uint8_t q1n1_asahi_logo[];
 
 /* Which controller carries the cable to the other machine.
  *
- * Firmware sets each DWC3's port capability direction from what the PD
- * negotiation found: a dock makes this machine a device, a bare cable makes it
- * a host. So "is it in host mode" is exactly "is there a bare cable here", and
- * a controller in device mode is either the console or something firmware owns.
- * Either connector works; only a host-mode one is ever touched. */
+ * GCTL describes the controller configuration, not the negotiated Type-C data
+ * role. BIOS312 can leave USB1 as a host while the Mac is also a host. Try NCM
+ * first; an idle USB1 can subsequently offer CDC device mode. Never borrow the
+ * controller carrying the existing console. */
 static int ncm_link_up(void)
 {
     return usb_state && ncm_link.x && ncm_link.stats.init_step == 9;
@@ -194,14 +203,25 @@ static void usb_hotplug(void)
         /* A cable appeared on a connector this payload has not taken yet. */
         usb_state->magic = 0;
         if (xhci_init(&xhci_host, base, usb_dma_base(), usb_dma_size())) return;
+        info.xhci_base = base;
     }
 
     uint32_t found = 0;
     for (uint32_t port = 1; port <= xhci_host.max_ports && !found; port++)
         if (xhci_portsc(&xhci_host, port) & 1u) found = port;   /* PORTSC.CCS */
-    if (!found) return;
+    if (!found) {
+        if (!host_idle_since) host_idle_since = now;
+        if (now - host_idle_since >= 1000000) direct_try();
+        return;
+    }
+    host_idle_since = 0;
 
-    if (ncm_open(&ncm_link, &xhci_host, 0, 2000)) return;
+    if (ncm_open(&ncm_link, &xhci_host, 0, 2000)) {
+        /* A failed attempt may own slots, rings or an outstanding transfer.
+         * Reset the controller before reusing its arena on the next attempt. */
+        xhci_host.stats.init_step = 0;
+        return;
+    }
     ncm_proxy_init(&ncm_proxy_link, &ncm_link, 0);
     ncm_proxy_announce(&ncm_proxy_link);
     dual_second = &ncm_proxy_link.io;
@@ -214,6 +234,7 @@ uint64_t q1n1_xhci_retry(void)
 {
     int status;
     if (!xhci_arena_base) return 1;
+    direct_stop();
     ncm_link.x = NULL;
     usb_state->magic = 0;
     uintptr_t base = xhci_candidate();
@@ -387,12 +408,31 @@ static void hex(uint64_t v)
     out(s);
 }
 static void field(const char *label, uint64_t v) { out(label); hex(v); out("\n"); }
+/* The inverse of component(), for compositing against what is already drawn. */
+static uint8_t channel(uint32_t value, uint32_t mask)
+{
+    if (!mask) return 0;
+    unsigned shift = 0;
+    while (!(mask & 1)) { mask >>= 1; shift++; }
+    return (uint8_t)((uint64_t)((value >> shift) & mask) * 255 / mask);
+}
+/* Premultiplied source-over, so the emblem lands on the firmware's screen as a
+ * dragon rather than as a dragon in a black box. */
 static void draw_logo_at(uint32_t left, uint32_t top)
 {
-    if (fb.width < 600 || fb.height < 280) return;
+    if (fb.width < 600 || fb.height < 280 || !fb.pixels) return;
     for (unsigned y = 0; y < 256; y++) for (unsigned x = 0; x < 256; x++) {
         const uint8_t *p = q1n1_logo + (y * 256 + x) * 4;
-        pixel(left + x, top + y, color((uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2]));
+        uint32_t a = p[3];
+        if (!a) continue;
+        uint32_t r = p[0], g = p[1], b = p[2];
+        if (a < 255 && left + x < fb.width && top + y < fb.height) {
+            uint32_t under = fb.pixels[(uint64_t)(top + y) * fb.stride + left + x], inv = 255 - a;
+            r += (uint32_t)channel(under, fb.red) * inv / 255;
+            g += (uint32_t)channel(under, fb.green) * inv / 255;
+            b += (uint32_t)channel(under, fb.blue) * inv / 255;
+        }
+        pixel(left + x, top + y, color(r << 16 | g << 8 | b));
     }
 }
 static void draw_logo(void) { draw_logo_at(fb.width - 276, 20); }
@@ -527,6 +567,7 @@ static void reset_now(void)
         q1n1_gic_stop(&gic);
         /* Present a clean USB disconnect so the Mac notices the reboot at once. */
         if (mode == MODE_USB_PROXY && usb.stats.init_step >= 2) qdwc3_stop(&usb);
+        direct_stop();
     }
     if (rt && rt->reset_system) rt->reset_system(0, 0, 0, NULL);
     __asm__ volatile("mov x0, #0x0009\n movk x0, #0x8400, lsl #16\n smc #0" ::: "x0", "x1", "x2", "x3", "memory");
@@ -540,9 +581,20 @@ uint64_t q1n1_platform_base(void) { return info.image_base; }
 void q1n1_platform_reboot(void) { reset_now(); }
 
 static uint64_t last_status;
+static uint64_t last_shift;
+
+/* How often the console steps around its anti-burn-in grid. Two minutes is well
+ * inside the hours it takes an OLED to retain an image, and far enough apart
+ * that the framebuffer copy it costs is not worth measuring. */
+#define CON_SHIFT_SECONDS 120
+
 static void status_panel(void)
 {
     const struct q1n1_proxy_stats *p = &q1n1_proxy_stats;
+    if (hz && counter() - last_shift > (uint64_t)CON_SHIFT_SECONDS * hz) {
+        last_shift = counter();
+        con_shift_next();
+    }
     for (uint32_t row = status_row; row < status_row + 6; row++) con_clear_row(row);
     con_at(status_row, 0);
     con_puts("proxy: up "); con_dec((counter() - proxy_start) / hz);
@@ -555,6 +607,12 @@ static void status_panel(void)
     con_puts(" Hz, serviced "); con_dec(gic.serviced); con_puts(", skipped "); con_dec(gic.skipped);
     con_puts(", spurious "); con_dec(gic.spurious);
     if (mode != MODE_USB_PROXY) return;
+    if (direct_device.active) {
+        const struct qdwc3_stats *s = &direct_device.usb.stats;
+        con_puts("\nusb1 direct CDC: cfg "); con_dec(s->configured);
+        con_puts(", setups "); con_dec(s->setups);
+        con_puts(", rx "); con_dec(s->rx_bytes); con_puts(", tx "); con_dec(s->tx_bytes);
+    }
     if (ncm_link_up()) {
         con_puts("\n");
         con_puts("ncm: blocks "); con_dec(ncm_link.stats.blocks_in);
@@ -626,6 +684,92 @@ static void usb_poll(void *ctx)
 static const struct q1n1_io usb_io = {.read = usb_read, .write = usb_write,
                                       .poll = usb_poll, .ready = usb_ready};
 
+/* The direct cable can negotiate either data direction. Its CDC alternative
+ * uses a separate controller, arena, identity and EP0 state from the dock. */
+static size_t direct_read(void *ctx, uint8_t *b, size_t n)
+{ (void)ctx; return qdwc3_read(&direct_device.usb, 0, b, n); }
+static size_t direct_write(void *ctx, const uint8_t *b, size_t n)
+{ (void)ctx; return qdwc3_write(&direct_device.usb, 0, b, n); }
+static int direct_ready(void *ctx)
+{ (void)ctx; return direct_device.active && qdwc3_ready(&direct_device.usb, 0); }
+static void direct_poll(void *ctx)
+{
+    (void)ctx;
+    qdwc3_poll(&direct_device.usb);
+    uint8_t discard[64];
+    qdwc3_read(&direct_device.usb, 1, discard, sizeof(discard));
+}
+static const struct q1n1_io direct_io = {.read = direct_read, .write = direct_write,
+                                          .poll = direct_poll, .ready = direct_ready};
+static void direct_stop(void)
+{
+    if (!direct_device.active) return;
+    int held = in_ncm;
+    in_ncm = 1;
+    usb1_device_stop(&direct_device);
+    if (dual_second == &direct_io) dual_second = NULL;
+    xhci_host.stats.init_step = 0; /* The controller must receive fresh rings. */
+    ncm_link.x = NULL;
+    usb_state->magic = 0;
+    host_idle_since = 0;
+    direct_down_since = 0;
+    if (!held) in_ncm = 0;
+}
+static int direct_try(void)
+{
+    if (direct_device.active || dual_second || !usb_state || ncm_link_up()) return -1;
+    if (xhci_host.base != XHCI_USB1_BASE || xhci_host.stats.init_step != 4) return -1;
+    /* Separate from the shared xHCI arena and the primary CDC DMA allocation. */
+    uint8_t *arena = xhci_arena_base - QDWC3_ARENA_SIZE;
+    if ((uintptr_t)arena < info.heap_base) return -1;
+    int status = usb1_device_start(&direct_device, xhci_host.base, arena, QDWC3_ARENA_SIZE);
+    usb_state->magic = 0;
+    ncm_link.x = NULL;
+    if (status) {
+        xhci_host.stats.init_step = 0;
+        host_idle_since = 0;
+        return status;
+    }
+    direct_activity = 0;
+    direct_down_since = 0;
+    direct_deadline = xhci_now_us() + 3000000;
+    info.xhci_base = 0; /* USB1 is now a device, not an active xHCI host. */
+    dual_second = &direct_io;
+    return 0;
+}
+static void direct_maintain(void)
+{
+    if (!direct_device.active) return;
+    uint64_t now = xhci_now_us();
+    const struct qdwc3_stats *s = &direct_device.usb.stats;
+    /* Release the controller when the cable physically goes away.
+     *
+     * `configured` cannot detect that: device mode forces session-valid, so an
+     * unplug raises no disconnect event and the flag stays set, refreshing the
+     * deadline below forever. That latched the machine in device mode serving a
+     * cable that was not there -- no re-probe, either arm, until a power cycle.
+     * The link state machine still follows the bus. Debounced because
+     * enumeration passes through Disconnected briefly. */
+    if (qdwc3_link_down(&direct_device.usb)) {
+        if (!direct_down_since) direct_down_since = now;
+        if (now - direct_down_since >= 500000) {
+            direct_stop();
+            return;
+        }
+    } else {
+        direct_down_since = 0;
+    }
+    uint64_t activity = s->setups + s->resets;
+    if (s->configured || activity != direct_activity) {
+        direct_deadline = now + 8000000;
+        direct_activity = activity;
+    } else if (now >= direct_deadline) {
+        /* No host answered. Return to host discovery for a Mac in device mode.
+         * Never cycle a configured link, including one whose tty is closed. */
+        direct_stop();
+    }
+}
+
 /* Both links, served at once.
  *
  * The console and the NCM link are alternatives, not a sequence: the proxy loop
@@ -668,6 +812,7 @@ static void dual_poll(void *ctx)
     } else {
         usb_hotplug();
     }
+    direct_maintain();
     /* With no dock the gadget's poll never runs, so nothing else would keep the
      * on-screen panel moving -- and that screen is the only diagnostic there. */
     if (no_cdc) status_tick();
@@ -848,11 +993,15 @@ static void proxy_main(void)
              (uint32_t)info.fb_stride, (uint32_t)info.fb_format);
     con_clear();
     switch (stage_config & 3) {
-    case LOGO_Q1N1_CORNER: draw_logo_for_generation(info.stage_generation); break;
+    case LOGO_CORNER: draw_logo_for_generation(info.stage_generation); break;
     case LOGO_NONE: break;
-    default:
+    case LOGO_ASAHI:
         con_logo(q1n1_asahi_logo, 256);
         con_reserve_centre(256); /* text stops where the logo starts, as in m1n1 */
+        break;
+    default:
+        con_logo(q1n1_logo, 256);
+        con_reserve_centre(256);
         break;
     }
 
@@ -1020,6 +1169,7 @@ static void proxy_main(void)
         /* Chainload: stop the tick first so the outgoing vectors and driver
          * state cannot be entered once the new stage owns the hardware. */
         q1n1_gic_stop(&gic);
+        direct_stop(); /* No DMA may refer to the outgoing stage's EP0 state. */
         uint64_t entry = q1n1_next_stage.entry;
         uint64_t argument = q1n1_next_stage.argument ? q1n1_next_stage.argument : (uintptr_t)&info;
         q1n1_next_stage.entry = q1n1_next_stage.argument = 0;

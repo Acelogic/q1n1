@@ -11,15 +11,41 @@
 #define MARGIN_ROWS 1
 #define MARGIN_COLS 1
 
+/* The panel on this machine is OLED, and this console is the longest-lived
+ * thing on it: the proxy status block redraws the same labels at the same
+ * coordinates for as long as the machine is up, which at the time of writing
+ * was 19,728 seconds in one sitting. Static lit sub-pixels for hours is exactly
+ * how burn-in happens.
+ *
+ * Two things are done about it.
+ *
+ * The glyph coverage value is scaled down before it becomes a grey level. The
+ * font is antialiased and its peaks hit 255; a status panel does not need the
+ * brightest white the panel can make, and dimming costs nothing but a multiply.
+ *
+ * And the whole image moves. Everything the console draws is offset by
+ * (shift_x, shift_y), and con_shift_next() walks that offset around a grid --
+ * carrying the pixels already on screen with it, so the boot log is not lost to
+ * save the panel. The step is larger than a glyph stroke so a lit pixel in one
+ * position is dark in the next. */
+#define CON_MAX_LEVEL 0xc0
+#define SHIFT_STEP 8
+#define SHIFT_GRID 5
+
 extern const uint8_t q1n1_font[];
 
 static struct {
     volatile uint32_t *pixels;
     uint32_t width, height, stride, red, green, blue;
     uint32_t rows, cols, row, col;
+    uint32_t shift_x, shift_y, shift_n;
     int ready;
 } con;
 
+static uint8_t dim(uint8_t value)
+{
+    return (uint8_t)(((uint32_t)value * CON_MAX_LEVEL) / 0xff);
+}
 static uint32_t component(uint8_t value, uint32_t mask)
 {
     if (!mask) return 0;
@@ -32,8 +58,12 @@ static uint32_t colour(uint32_t rgb)
     return component((uint8_t)(rgb >> 16), con.red) | component((uint8_t)(rgb >> 8), con.green) |
            component((uint8_t)rgb, con.blue);
 }
+/* Every pixel the console draws goes through here, so the shift is applied here
+ * and nowhere else -- one place to be right rather than one per drawing call. */
 static void put_pixel(uint32_t x, uint32_t y, uint32_t value)
 {
+    x += con.shift_x;
+    y += con.shift_y;
     if (con.pixels && x < con.width && y < con.height) con.pixels[(uint64_t)y * con.stride + x] = value;
 }
 static void fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t rgb)
@@ -75,7 +105,66 @@ uint32_t con_cols(void) { return con.cols; }
 uint32_t con_row(void) { return con.row; }
 uint32_t con_width(void) { return con.width; }
 uint32_t con_height(void) { return con.height; }
-void con_clear(void) { fill(0, 0, con.width, con.height, 0x000000); con.row = con.col = 0; }
+void con_clear(void)
+{
+    /* Ignore the shift: a clear means the whole panel, including whatever the
+     * previous offset left outside the shifted area. */
+    uint32_t sx = con.shift_x, sy = con.shift_y;
+    con.shift_x = con.shift_y = 0;
+    fill(0, 0, con.width, con.height, 0x000000);
+    con.shift_x = sx; con.shift_y = sy;
+    con.row = con.col = 0;
+}
+
+/* Move the console one step around the anti-burn-in grid, taking the pixels
+ * already on screen with it.
+ *
+ * Carrying the image matters. The alternative is to shift the origin and clear,
+ * which is three lines instead of thirty -- and throws away the boot log every
+ * time it fires. The log is the reason anyone is looking at this screen, so the
+ * pixels move with the text.
+ *
+ * The copy has to run in the direction that does not overwrite what it has not
+ * read yet, which for a downward or rightward move means starting at the far
+ * end. The strips the image vacates are blanked, or the old edge stays lit and
+ * the whole exercise is pointless. */
+void con_shift_next(void)
+{
+    if (!con.ready || !con.pixels) return;
+    con.shift_n++;
+    uint32_t nx = (con.shift_n % SHIFT_GRID) * SHIFT_STEP;
+    uint32_t ny = ((con.shift_n / SHIFT_GRID) % SHIFT_GRID) * SHIFT_STEP;
+    int dx = (int)nx - (int)con.shift_x;
+    int dy = (int)ny - (int)con.shift_y;
+    if (!dx && !dy) return;
+
+    uint32_t limit = (SHIFT_GRID - 1) * SHIFT_STEP;
+    if (con.width <= limit || con.height <= limit) return;
+    uint32_t w = con.width - limit;              /* the area that always exists */
+    uint32_t h = con.height - limit;
+
+    for (uint32_t n = 0; n < h; n++) {
+        uint32_t y = (dy > 0) ? (h - 1 - n) : n;
+        volatile uint32_t *src = con.pixels + (uint64_t)(y + con.shift_y) * con.stride + con.shift_x;
+        volatile uint32_t *dst = con.pixels + (uint64_t)(y + ny) * con.stride + nx;
+        if (dx > 0)
+            for (uint32_t x = w; x-- > 0;) dst[x] = src[x];
+        else
+            for (uint32_t x = 0; x < w; x++) dst[x] = src[x];
+    }
+    con.shift_x = nx;
+    con.shift_y = ny;
+
+    /* Blank everything outside the new position, in panel coordinates. */
+    uint32_t sx = con.shift_x, sy = con.shift_y;
+    con.shift_x = con.shift_y = 0;
+    if (sy) fill(0, 0, con.width, sy, 0x000000);
+    if (sy + h < con.height) fill(0, sy + h, con.width, con.height - (sy + h), 0x000000);
+    if (sx) fill(0, sy, sx, h, 0x000000);
+    if (sx + w < con.width) fill(sx + w, sy, con.width - (sx + w), h, 0x000000);
+    con.shift_x = sx; con.shift_y = sy;
+    __asm__ volatile("dsb sy" ::: "memory");
+}
 void con_bar(uint32_t rgb) { fill(0, 0, con.width, 8, rgb); }
 void con_at(uint32_t row, uint32_t col) { con.row = row; con.col = col; }
 void con_clear_row(uint32_t row)
@@ -87,8 +176,10 @@ void con_clear_row(uint32_t row)
 /* Scroll the whole text area up one row, as m1n1's fb_move_font_row chain does. */
 static void scroll(void)
 {
-    uint32_t top = MARGIN_ROWS * FONT_HEIGHT;
-    uint32_t left = MARGIN_COLS * FONT_WIDTH;
+    /* This is the one drawing path that does not go through put_pixel -- it
+     * moves whole rows -- so it carries the shift itself. */
+    uint32_t top = MARGIN_ROWS * FONT_HEIGHT + con.shift_y;
+    uint32_t left = MARGIN_COLS * FONT_WIDTH + con.shift_x;
     uint32_t span = con.cols * FONT_WIDTH;
     for (uint32_t y = 0; y + FONT_HEIGHT < con.rows * FONT_HEIGHT; y++) {
         volatile uint32_t *destination = con.pixels + (uint64_t)(top + y) * con.stride + left;
@@ -114,7 +205,7 @@ static void put(char c)
     uint32_t y = (MARGIN_ROWS + con.row) * FONT_HEIGHT;
     for (uint32_t j = 0; j < FONT_HEIGHT; j++)
         for (uint32_t i = 0; i < FONT_WIDTH; i++) {
-            uint8_t value = bitmap[j * FONT_WIDTH + i];
+            uint8_t value = dim(bitmap[j * FONT_WIDTH + i]);
             if (value) put_pixel(x + i, y + j, colour((uint32_t)value << 16 | (uint32_t)value << 8 | value));
         }
     con.col++;
@@ -148,14 +239,40 @@ void con_dec(uint64_t value)
 }
 void con_field(const char *label, uint64_t value) { con_puts(label); con_hex(value); con_puts("\n"); }
 
+/* The inverse of component(): recover a 0..255 channel from a packed pixel. */
+static uint8_t channel(uint32_t value, uint32_t mask)
+{
+    if (!mask) return 0;
+    unsigned shift = 0;
+    while (!(mask & 1)) { mask >>= 1; shift++; }
+    return (uint8_t)((uint64_t)((value >> shift) & mask) * 255 / mask);
+}
+static uint32_t peek_pixel(uint32_t x, uint32_t y)
+{
+    x += con.shift_x;
+    y += con.shift_y;
+    if (!con.pixels || x >= con.width || y >= con.height) return 0;
+    return con.pixels[(uint64_t)y * con.stride + x];
+}
+/* Premultiplied source-over: the emblem composites onto whatever is already on
+ * screen instead of stamping its own background over it. Premultiplied keeps
+ * this to out = src + dst * (1 - a), and bounds each channel by 255 for free. */
 void con_logo_at(const uint8_t *image, uint32_t size, uint32_t left, uint32_t top)
 {
     if (!con.ready || !image || !size) return;
     for (uint32_t y = 0; y < size; y++)
         for (uint32_t x = 0; x < size; x++) {
             const uint8_t *pixel = image + ((uint64_t)y * size + x) * 4;
-            put_pixel(left + x, top + y,
-                      colour((uint32_t)pixel[0] << 16 | (uint32_t)pixel[1] << 8 | pixel[2]));
+            uint32_t a = pixel[3];
+            if (!a) continue;           /* fully transparent: leave the screen alone */
+            uint32_t r = pixel[0], g = pixel[1], b = pixel[2];
+            if (a < 255) {              /* an antialiased edge, so blend with the screen */
+                uint32_t under = peek_pixel(left + x, top + y), inv = 255 - a;
+                r += (uint32_t)channel(under, con.red) * inv / 255;
+                g += (uint32_t)channel(under, con.green) * inv / 255;
+                b += (uint32_t)channel(under, con.blue) * inv / 255;
+            }
+            put_pixel(left + x, top + y, colour(r << 16 | g << 8 | b));
         }
     __asm__ volatile("dsb sy" ::: "memory");
 }

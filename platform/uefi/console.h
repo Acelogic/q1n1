@@ -8,6 +8,10 @@
 
 int con_init(uint64_t base, uint32_t width, uint32_t height, uint32_t stride, uint32_t format);
 void con_clear(void);
+/* Step the whole console around a small grid, carrying the image with it, so a
+ * panel left showing one page for hours does not keep the same sub-pixels lit.
+ * Safe to call from the proxy loop; it costs one framebuffer copy. */
+void con_shift_next(void);
 void con_bar(uint32_t rgb);
 void con_puts(const char *text);
 void con_hex(uint64_t value);          /* 0x0123456789abcdef */

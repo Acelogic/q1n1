@@ -159,7 +159,9 @@ q1n1_logo:
     .incbin "data/bootlogo_256.bin"
 
 /* m1n1's console font (Source Code Pro Bold, 16x32, one coverage byte per
- * pixel) and the upstream Asahi logo, so q1n1 can present the same screen. */
+ * pixel), so q1n1 lays out the same screen. The emblem above serves both
+ * q1n1 placements: centred where m1n1 puts its logo, or parked in a corner.
+ * The upstream Asahi mark stays embedded too, for --logo asahi. */
 .p2align 4
 .globl q1n1_font
 q1n1_font:

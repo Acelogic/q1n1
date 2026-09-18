@@ -359,7 +359,7 @@ efi_status q1n1_boot_window(efi_handle image, struct efi_system_table *st,
                     if (r->choice == Q1N1_BOOT_PROXY_NCM) {
                         /* Nothing to snapshot: the device-mode controller is
                          * left exactly as firmware had it. */
-                        out(st, "No USB0 host; taking the NCM link instead.\n");
+                        out(st, "No USB0 host; discovering a direct USB link.\n");
                     } else if (r->choice == Q1N1_BOOT_PROXY && !c.configured) {
                         out(st, "Proxy needs the Mac connected and configured; staying in the shell.\n");
                         r->choice = Q1N1_BOOT_SHELL;
@@ -403,7 +403,7 @@ efi_status q1n1_boot_window(efi_handle image, struct efi_system_table *st,
         return status ? status : EFI_UNSUPPORTED;
     }
     out(st, r->choice == Q1N1_BOOT_PROXY ? "Choice: proxy\n"
-          : r->choice == Q1N1_BOOT_PROXY_NCM ? "Choice: proxy over the NCM link (no USB0 host)\n"
+          : r->choice == Q1N1_BOOT_PROXY_NCM ? "Choice: proxy over direct USB (no USB0 host)\n"
           : r->choice == Q1N1_BOOT_SHELL ? "Choice: shell\n" : "Choice: Windows\n");
     /* The NCM choice takes nothing over, so none of the device-mode snapshot
      * validation below applies to it. */

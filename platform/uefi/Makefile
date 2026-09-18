@@ -21,7 +21,7 @@ STAGE_CFLAGS := --target=aarch64-unknown-none-elf -O2 -ffreestanding -fno-builti
     -fno-stack-protector -mgeneral-regs-only -mno-outline-atomics -fno-pic -mcmodel=small \
     -Wall -Wextra -Werror -Iplatform/uefi -DQ1N1_STAGE -MMD -MP
 STAGE_OBJS := $(addprefix $(OUT)/stage/,main.obj entry.obj q1n1-proxy.obj proxy-asm.obj \
-    qcom-dwc3.obj gicv3.obj console.obj sysinfo.obj fbcon.obj xhci.obj ncm.obj ncm-proxy.obj)
+    qcom-dwc3.obj usb1-device.obj gicv3.obj console.obj sysinfo.obj fbcon.obj xhci.obj ncm.obj ncm-proxy.obj)
 
 .PHONY: all clean usb-probe usb-role-probe usb-role-fixture usb-role-change usb-serial usb-typec-probe usb-ucsi-probe
 all: $(OUT)/q1n1.efi stage
@@ -251,6 +251,10 @@ $(OUT)/ncm-proxy.obj: platform/uefi/ncm-proxy.c platform/uefi/ncm-proxy.h platfo
 	@mkdir -p $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(OUT)/usb1-device.obj: platform/uefi/usb1-device.c platform/uefi/usb1-device.h
+	@mkdir -p $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(OUT)/q1n1-proxy.obj: platform/uefi/q1n1-proxy.c platform/uefi/q1n1-proxy.h
 	@mkdir -p $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -260,7 +264,7 @@ $(OUT)/proxy-asm.obj: platform/uefi/proxy-asm.S
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/q1n1.efi: $(OUT)/main.obj $(OUT)/entry-frame.obj $(OUT)/boot-window.obj $(OUT)/ucsi-console.obj \
-    $(OUT)/q1n1-proxy.obj $(OUT)/proxy-asm.obj $(OUT)/qcom-dwc3.obj $(OUT)/gicv3.obj \
+    $(OUT)/q1n1-proxy.obj $(OUT)/proxy-asm.obj $(OUT)/qcom-dwc3.obj $(OUT)/usb1-device.obj $(OUT)/gicv3.obj \
     $(OUT)/console.obj $(OUT)/sysinfo.obj $(OUT)/fbcon.obj $(OUT)/xhci.obj $(OUT)/ncm.obj $(OUT)/ncm-proxy.obj
 	$(LD) /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:arm64 \
 	    /dynamicbase /out:$@ $^

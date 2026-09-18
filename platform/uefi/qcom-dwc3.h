@@ -49,6 +49,7 @@ struct qdwc3 {
         uint8_t line_coding[7];
     } pipe[QDWC3_PIPES];
     uint16_t status_word;
+    uint8_t string_buffer[64]; /* Each controller may have an EP0 reply pending. */
     struct qdwc3_stats stats;
 };
 
@@ -59,6 +60,10 @@ void qdwc3_poll(struct qdwc3 *d);
 size_t qdwc3_read(struct qdwc3 *d, unsigned pipe, uint8_t *buffer, size_t count);
 size_t qdwc3_write(struct qdwc3 *d, unsigned pipe, const uint8_t *buffer, size_t count);
 int qdwc3_ready(const struct qdwc3 *d, unsigned pipe);
+/* True while the link state machine reports Disconnected. `stats.configured`
+ * cannot see a physical unplug, because device mode forces session-valid; see
+ * the comment on the definition. Debounce before acting on it. */
+int qdwc3_link_down(const struct qdwc3 *d);
 void qdwc3_stop(struct qdwc3 *d);
 
 /* Platform hooks supplied by the EFI app or the host simulation. */

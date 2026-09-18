@@ -62,6 +62,8 @@ REMOTE_DIR = os.environ.get('A16_REMOTE_DIR', r'C:\q1n1-bringup')
 
 def ports(serial, interface=1):
     try:
+        if serial == PROXY_SERIAL:
+            return q1n1proxy.find_ports(serial, interface)
         found, _ = watcher.inventory(serial, interface)
         return found
     except Exception:
@@ -164,7 +166,31 @@ def wait_for(predicate, timeout, message):
 
 
 def claim_window(args, choice, timeout=180):
-    paths = wait_for(lambda: ports(BOOT_SERIAL), timeout, 'the q1n1 boot window did not appear')
+    # With no dock, --auto can enter EL2 without exposing the USB0 firmware
+    # boot window. The USB1 CDC fallback is the first reachable serial port.
+    # Accept that outcome only for the normal proxy choice, whose armed return
+    # matches --auto. Other choices still require an actual boot-window reply.
+    def reachable():
+        paths = ports(BOOT_SERIAL)
+        if paths:
+            return 'window', paths
+        if choice == 'proxy':
+            paths = ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE)
+            if paths:
+                return 'proxy', paths
+        return None
+
+    kind, paths = wait_for(reachable, timeout, 'neither the q1n1 boot window nor the requested proxy appeared')
+    if kind == 'proxy':
+        proxy = q1n1proxy.connect(paths[0], wait=15)
+        try:
+            info = proxy.bootinfo()
+            if info['current_el'] != 2 or not info['return_armed']:
+                raise SystemExit('direct proxy appeared but did not confirm EL2 and an armed return')
+        finally:
+            proxy.link.close()
+        print(f'--auto reached the EL2 proxy directly on {paths[0]}')
+        return 'OK proxy return=armed (automatic direct USB boot)'
     print(f'boot window on {paths[0]}; sending {choice!r}')
     window = BootWindow(paths[0], verbose=args.verbose)
     try:
@@ -195,10 +221,18 @@ def reboot_from_proxy(_args):
         return False
     print(f'asking the EL2 proxy on {paths[0]} to reset')
     proxy = q1n1proxy.connect(paths[0])
-    info = proxy.bootinfo()
-    if not info['return_armed']:
-        print('warning: BootNext is not armed, so this reset goes to Windows')
-    proxy.reboot()
+    try:
+        info = proxy.bootinfo()
+        if not info['return_armed']:
+            print('warning: BootNext is not armed, so this reset goes to Windows')
+        proxy.reboot()
+        # The reset request has no reply. Keep the tty open until the target
+        # disconnects, both to let queued bytes leave and to avoid claiming the
+        # old proxy as a successful automatic boot if the reset never happened.
+        wait_for(lambda: paths[0] not in ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE),
+                 15, 'the proxy did not disconnect after the reset request')
+    finally:
+        proxy.link.close()
     return True
 
 
@@ -224,7 +258,7 @@ def command_status(args):
         result = run_powershell(args, '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString("o")')
         print(f'  ssh reachable, booted {result.stdout.strip()}')
     else:
-        print('  no q1n1 USB port and no ssh; press the power button or check the dock cable')
+        print('  no q1n1 USB port and no ssh; press the power button or check the USB cable')
     return 0
 
 

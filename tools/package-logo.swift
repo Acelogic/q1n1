@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
-// Deterministic PNG -> opaque RGBA packaging for the boot framebuffer.
+// Deterministic PNG -> premultiplied RGBA packaging for the boot framebuffer.
+//
+// The alpha channel is kept, so the emblem can be composited onto whatever is
+// already on screen instead of stamping a black square over it. Premultiplied
+// is what the blit wants (out = src + dst * (1 - a), no division), and it also
+// leaves RGB at zero wherever alpha is zero -- so a consumer that ignores the
+// alpha byte still sees the emblem on black, exactly as the flattened asset did.
 import AppKit
 import Foundation
 
@@ -15,8 +21,6 @@ pixels.withUnsafeMutableBytes { bytes in
                         bitsPerComponent: 8, bytesPerRow: width * 4,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.setFillColor(NSColor.black.cgColor)
-    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
     ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
 }
 try Data(pixels).write(to: URL(fileURLWithPath: CommandLine.arguments[2]))

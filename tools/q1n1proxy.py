@@ -43,8 +43,10 @@ DATA_END_SENTINEL = 0xB0CACC10
 FEATURE_DISABLE_DATA_CSUMS = 1
 GUARD_MARKER = 0xACCE5515ABAD1DEA
 STAGE_MAGIC = 0x3147545331314E51  # "Q1N1STG1" at offset 8 of a stage image
-# Offset 24 holds a config word the host patches before uploading.
-STAGE_LOGO = {'asahi': 0, 'q1n1': 1, 'none': 2}
+# Offset 24 holds a config word the host patches before uploading. The low two
+# bits pick the boot emblem and its placement; 0 (the q1n1 dragon, centred) is
+# what an unpatched stage draws.
+STAGE_LOGO = {'centre': 0, 'corner': 1, 'none': 2, 'asahi': 3}
 
 START_BOOT, START_EXCEPTION = 0, 1
 EXC_RET_UNHANDLED, EXC_RET_HANDLED = 1, 2
@@ -69,6 +71,7 @@ BOOTINFO_FIELDS = (
 EXCEPTION_FIELDS = [f'x{n}' for n in range(31)] + ['sp', 'spsr', 'elr', 'esr', 'far', 'el', 'vector']
 
 PROXY_SERIAL = 'A16-Q1N1-EL2'
+DIRECT_SERIAL = 'A16-Q1N1-EL2B'
 PROXY_INTERFACE = 1   # first CDC ACM data interface = proxy port
 CONSOLE_INTERFACE = 3  # second data interface = q1n1 console
 
@@ -100,6 +103,9 @@ def find_ports(serial=PROXY_SERIAL, interface=PROXY_INTERFACE):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     ports, _ = module.inventory(serial, interface)
+    if serial == PROXY_SERIAL:
+        direct, _ = module.inventory(DIRECT_SERIAL, interface)
+        ports += [path for path in direct if path not in ports]
     return ports
 
 
@@ -438,8 +444,8 @@ class Proxy:
 
     @staticmethod
     def stage_configure(data, logo=None, xhci=False):
-        """Patch the stage's config word: which logo it draws, and whether it
-        brings up USB1 as an xHCI host on the way in."""
+        """Patch the stage's config word: where it places the emblem, and
+        whether it brings up USB1 as an xHCI host on the way in."""
         if logo is None and not xhci:
             return data
         value = STAGE_LOGO[logo] if logo is not None else 0
@@ -610,7 +616,8 @@ def main():
     chain.add_argument('--base', type=lambda v: int(v, 0))
     chain.add_argument('--settle', type=float, default=6.0)
     chain.add_argument('--logo', choices=sorted(STAGE_LOGO),
-                       help='asahi: centred like m1n1; q1n1: dragon, corner per generation; none')
+                       help='dragon centred (default), corner per generation, '
+                            'none, or the upstream asahi mark')
     sub.add_parser('acpi', help='list ACPI tables')
     sub.add_parser('reboot', help='reset the machine (BootNext decides where it lands)')
     sub.add_parser('shell', help='interactive python shell with p (proxy) bound')

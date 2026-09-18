@@ -6,6 +6,11 @@ is loaded by iBoot, q1n1 is a UEFI application: firmware loads it, it takes the
 machine at EL2 after `ExitBootServices`, and then serves m1n1's proxy protocol
 so a host can drive the hardware interactively.
 
+![The q1n1 boot console on a Zenbook A16, read back from the live framebuffer](docs/images/q1n1-boot-screen.png)
+
+*The screen above is the real thing, not a mockup: the framebuffer was read out
+of the running machine over the proxy while it sat at EL2.*
+
 **[Installation and usage →](docs/A16-INSTALL.md)**
 
 ## What works
@@ -19,13 +24,16 @@ so a host can drive the hardware interactively.
   from its boot window, or from q1n1 itself — a q1n1-to-q1n1 restart never
   passes through Windows. Windows stays first in the firmware boot order and a
   failed payload falls back to it.
-- **Chainloading**: replace the running EL2 code in ~0.2 s without rebooting,
+- **Chainloading**: replace the running EL2 code in ~0.3 s without rebooting,
   which is what makes this iterable at all.
-- **Its own USB stack, both directions.** q1n1 drives the USB0 DWC3 as a device
-  to serve a CDC ACM console, and drives the USB1 xHCI as a *host* to enumerate
-  the Mac at the other end of a bare C-to-C cable as a CDC-NCM adapter. The
-  proxy then runs over that link as UDP over IPv6 link-local, unprivileged and
-  with no dock in the path — 4.6 MB/s write, 8.5 MB/s read.
+- **Its own USB stack, both directions and both ends of the cable.** q1n1 drives
+  the USB0 DWC3 as a device for a CDC ACM console, and drives USB1 as an xHCI
+  *host* to enumerate the Mac at the other end of a bare C-to-C cable as a
+  CDC-NCM adapter — the proxy then runs over it as UDP over IPv6 link-local, at
+  4.6 MB/s write and 8.5 MB/s read. When the cable leaves USB1 in host mode with
+  nothing attached, q1n1 instead offers CDC device mode there and serves the
+  same proxy directly, with no dock in the path. See
+  [A16-DIRECT-USB-C.md](docs/A16-DIRECT-USB-C.md).
 - **UCSI 2.1** register access and connector queries.
 
 Not yet: the guest hypervisor, SMP, or any Apple-specific drivers.
@@ -39,20 +47,22 @@ that turned out to be wrong:
 | --- | --- |
 | [A16-INSTALL.md](docs/A16-INSTALL.md) | build, install, boot, connect, recover |
 | [A16-Q1N1-PROXY.md](docs/A16-Q1N1-PROXY.md) | EL2 proxy, boot control, xHCI/NCM, the UDP transport |
+| [A16-DIRECT-USB-C.md](docs/A16-DIRECT-USB-C.md) | dock-free direct USB-C, and the data-role dead ends |
 | [A16-FIRST-EL2-BOOT.md](docs/A16-FIRST-EL2-BOOT.md) | first EL2 execution on hardware |
 | [A16-USB-EL2-SERIAL.md](docs/A16-USB-EL2-SERIAL.md) | USB after ExitBootServices |
 | [A16-USB-DOCK.md](docs/A16-USB-DOCK.md) | CDC ACM serial through the dock |
 | [A16-UCSI-REGISTERS.md](docs/A16-UCSI-REGISTERS.md) | USB-C transport and data-role experiments |
 | [A16-BOOT.md](docs/A16-BOOT.md) | boot and serial guide |
 
-## Build
+## Build and test
 
 ```shell
 make uefi        # build/uefi/q1n1.efi and the chainloadable stages
 ```
 
-Then run the tests — QEMU boots the real binary to EL2, and three native suites
-run the drivers against simulators under sanitizers:
+QEMU boots the real binary to EL2 and checks it end to end, including two
+chainloads; the native suites run the drivers against register models under
+ASan/UBSan, with no firmware and no physical MMIO:
 
 ```shell
 python3 tools/test-uefi.py --proxy
@@ -61,97 +71,34 @@ python3 tools/test-q1n1-xhci.py
 python3 tools/test-q1n1-ncmproxy.py
 ```
 
+QEMU does not model this machine's Type-C hardware, so the direct-USB path is
+covered by the native tests plus the hardware logs cited in
+[A16-DIRECT-USB-C.md](docs/A16-DIRECT-USB-C.md).
+
+## Boot emblem
+
+The mark on the boot screen is q1n1's own dragon, an original project emblem
+packaged from `data/q1n1/` — see that directory's README for how it was made and
+how to repackage it. It carries an alpha channel and is composited onto the
+screen, so it does not stamp a black square over whatever firmware left there.
+A chainloaded stage takes its placement from the host:
+
+```shell
+python3 tools/q1n1proxy.py chainload build/uefi/q1n1-stage.bin --logo corner
+```
+
+`centre` is the default and matches m1n1's placement; `corner` parks the emblem
+in a different corner per chainload generation, so the screen says at a glance
+which one is running; `none` draws nothing; `asahi` draws the upstream Asahi
+logomark instead.
+
 ## Credit
 
 This is a fork of the [Asahi Linux](https://asahilinux.org/) project's m1n1. The
 proxy protocol, the host client structure and most of the tree are theirs; MIT
-licence inherited. Upstream's README follows.
-
-The original m1n1 build and its upstream documentation remain below.
-
-## Upstream m1n1: A bootloader and experimentation playground for Apple Silicon
-
-## Building
-
-You need an `aarch64-linux-gnu-gcc` cross-compiler toolchain (or a native one, if running on ARM64).
-You will also need to install the `aarch64-unknown-none-softfloat` toolchain for rust.
-
-```shell
-$ rustup target add aarch64-unknown-none-softfloat
-```
-
-```shell
-$ git clone --recursive https://github.com/AsahiLinux/m1n1.git
-$ cd m1n1
-$ make
-```
-
-To build on a native ARM64 machine:
-* On Linux, use `make ARCH=`.
-* On macOS using Homebrew:
-```shell
-$ brew install llvm lld
-$ make
-```
-* On macOS using MacPorts:
-```shell
-$ sudo port install llvm clang
-$ sudo port select llvm llvm-mp-<version>
-$ make
-```
-
-The output will be in `build/m1n1.macho`.
-
-To build verbosely, use `make V=1`.
-
-### Building using the container setup
-
-If you have a container runtime installed, like Podman or Docker, you can make use of the compose setup, which contains all build dependencies.
-
-```shell
-$ git clone --recursive https://github.com/AsahiLinux/m1n1.git
-$ cd m1n1
-$ podman-compose run m1n1 make
-$ # or
-$ docker-compose run m1n1 make
-```
-
-## Usage
-
-Our [wiki](https://asahilinux.org/docs/sw/m1n1-user-guide/) has more information on how to
-use m1n1.
-
-To install on an OS container based on macOS <12.1, use `m1n1.macho`:
-
-```shell
-kmutil configure-boot -c m1n1.macho -v <path to your OS volume>
-```
-
-To install on an OS container based on macOS >=12.1, use `m1n1.bin`:
-
-```shell
-kmutil configure-boot -c m1n1.bin --raw --entry-point 2048 --lowest-virtual-address 0 -v <path to your OS volume>
-```
-
-## Payloads
-
-m1n1 supports running payloads by simple concatenation:
-
-```shell
-$ cat build/m1n1.macho Image.gz build/dtb/apple-j274.dtb initramfs.cpio.gz > m1n1-payload.macho
-$ cat build/m1n1.bin Image.gz build/dtb/apple-j274.dtb initramfs.cpio.gz > m1n1-payload.bin
-```
-
-Supported payload file formats:
-
-* Kernel images (or compatible). Must be compressed or last payload.
-* Devicetree blobs (FDT). May be uncompressed or compressed.
-* Initramfs cpio images. Must be compressed.
-
-Supported compression formats:
-
-* gzip
-* xz
+licence inherited. Upstream's own README, build instructions for Apple Silicon
+and user guide live at [AsahiLinux/m1n1](https://github.com/AsahiLinux/m1n1) and
+the [Asahi wiki](https://asahilinux.org/docs/sw/m1n1-user-guide/).
 
 ## License
 
@@ -215,3 +162,9 @@ m1n1 embeds portions of [musl-libc](https://musl.libc.org/)'s floating point lib
 * Copyright (c) 2017-2018, Arm Limited.
 
 m1n1 embeds some rust crates. Licenses can be found in the vendor directory for every crate.
+
+The Asahi Linux logomark, embedded for `--logo asahi` and in the `artwork`
+submodule, is copyright (c) 2021 soundflora* and Hector Martin, and is used to
+reference the Asahi Linux project rather than to represent this fork. q1n1's own
+dragon emblem is an original mark for this project and is not the official
+Qualcomm or Snapdragon logo.
