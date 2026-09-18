@@ -582,11 +582,18 @@ void q1n1_platform_reboot(void) { reset_now(); }
 
 static uint64_t last_status;
 static uint64_t last_shift;
+static uint64_t last_swap;
 
 /* How often the console steps around its anti-burn-in grid. Two minutes is well
  * inside the hours it takes an OLED to retain an image, and far enough apart
  * that the framebuffer copy it costs is not worth measuring. */
 #define CON_SHIFT_SECONDS 120
+/* And how often the text column changes sides. The grid handles a lit sub-pixel
+ * holding one glyph stroke; it does nothing about half the panel being lit and
+ * the other half black for the whole session, which with a centred emblem is
+ * the actual shape on screen. Five minutes gives each side a real rest without
+ * the screen looking like it has a fault. */
+#define CON_SWAP_SECONDS 300
 
 static void status_panel(void)
 {
@@ -594,6 +601,12 @@ static void status_panel(void)
     if (hz && counter() - last_shift > (uint64_t)CON_SHIFT_SECONDS * hz) {
         last_shift = counter();
         con_shift_next();
+    }
+    /* Only the column moves; rows are untouched, so status_row still points at
+     * the same lines and the status block redraws itself on the new side. */
+    if (hz && counter() - last_swap > (uint64_t)CON_SWAP_SECONDS * hz) {
+        last_swap = counter();
+        con_swap_side();
     }
     for (uint32_t row = status_row; row < status_row + 6; row++) con_clear_row(row);
     con_at(status_row, 0);
@@ -989,19 +1002,29 @@ static void proxy_main(void)
     __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
     info.current_el = el;
     proxy_start = counter();
+    /* Start both panel timers here. They are compared against a counter that
+     * has been running since power-on, so leaving them at zero makes the first
+     * comparison true and the console jumps as soon as it is drawn. */
+    last_shift = last_swap = proxy_start;
     con_init(info.fb_base, (uint32_t)info.fb_width, (uint32_t)info.fb_height,
              (uint32_t)info.fb_stride, (uint32_t)info.fb_format);
+    /* Before anything is drawn: this decides how the column is sized, and a
+     * machine whose panel does not retain an image gets a console that stays
+     * put. The line naming the decision is printed with the rest of the log. */
+    con_retains(sysinfo_panel_retains(info.smbios3));
     con_clear();
     switch (stage_config & 3) {
     case LOGO_CORNER: draw_logo_for_generation(info.stage_generation); break;
     case LOGO_NONE: break;
+    /* Reserve first: the emblem is placed relative to the text column, so the
+     * column has to be sized before the mark knows which half it belongs in. */
     case LOGO_ASAHI:
-        con_logo(q1n1_asahi_logo, 256);
-        con_reserve_centre(256); /* text stops where the logo starts, as in m1n1 */
+        con_reserve_emblem(256);
+        con_emblem(q1n1_asahi_logo, 256);
         break;
     default:
-        con_logo(q1n1_logo, 256);
-        con_reserve_centre(256);
+        con_reserve_emblem(256);
+        con_emblem(q1n1_logo, 256);
         break;
     }
 
@@ -1027,6 +1050,16 @@ static void proxy_main(void)
     con_puts(" [s="); con_dec(info.fb_stride); con_puts("] @"); con_hexn(info.fb_base, 8); con_puts("\n");
     con_puts("fb console: max rows "); con_dec(con_rows()); con_puts(", max cols "); con_dec(con_cols());
     con_puts("\n");
+    /* Say which way this went. If the panel is OLED and this line reads "fixed",
+     * the product match is wrong and the screen is unprotected -- which is not
+     * something to discover from a burnt-in panel months later. */
+    con_puts("fb panel: ");
+    if (sysinfo_panel_retains(info.smbios3)) {
+        con_puts("retains image, console moves (grid "); con_dec(CON_SHIFT_SECONDS);
+        con_puts(" s, sides "); con_dec(CON_SWAP_SECONDS); con_puts(" s)\n");
+    } else {
+        con_puts("not known to retain, console fixed\n");
+    }
     con_puts("fb: display logo\n");
     con_puts("q1n1 mem: heap "); con_dec(info.heap_size >> 20); con_puts(" MiB @ "); con_hexn(info.heap_base, 8);
     con_puts(", dma "); con_dec(info.dma_size >> 20); con_puts(" MiB @ "); con_hexn(info.dma_base, 8);

@@ -31,6 +31,8 @@
 #define CON_MAX_LEVEL 0xc0
 #define SHIFT_STEP 8
 #define SHIFT_GRID 5
+/* How far the grid can carry the image from its origin, in either axis. */
+#define SHIFT_TRAVEL ((SHIFT_GRID - 1) * SHIFT_STEP)
 
 extern const uint8_t q1n1_font[];
 
@@ -39,6 +41,10 @@ static struct {
     uint32_t width, height, stride, red, green, blue;
     uint32_t rows, cols, row, col;
     uint32_t shift_x, shift_y, shift_n;
+    uint32_t text_x;                    /* which side of the panel the text sits on */
+    const uint8_t *emblem;              /* redrawn on the far side from the text */
+    uint32_t emblem_size, emblem_x, emblem_y, swap_n;
+    int retains;                        /* panel holds a static image: keep moving */
     int ready;
 } con;
 
@@ -92,13 +98,60 @@ int con_init(uint64_t base, uint32_t width, uint32_t height, uint32_t stride, ui
     return 1;
 }
 
-void con_reserve_centre(uint32_t size)
+void con_reserve_emblem(uint32_t size)
 {
     if (!con.ready || con.width <= size) return;
-    uint32_t free_px = (con.width - size) / 2;           /* space left of the image */
+    uint32_t free_px = (con.width - size) / 2;           /* space beside the image */
+    /* Leave the grid its travel. Without this the text is sized to fill the
+     * space exactly, and then the first shift pushes its right edge into the
+     * image -- and there is no room to park the same column on the far side. */
+    if (free_px <= SHIFT_TRAVEL) return;
+    free_px -= SHIFT_TRAVEL;
     uint32_t cols = free_px / FONT_WIDTH;
     if (cols > MARGIN_COLS + 1) cols -= MARGIN_COLS + 1; /* keep a gap */
     if (cols && cols < con.cols) con.cols = cols;
+}
+void con_retains(int panel_retains) { con.retains = panel_retains; }
+
+/* The width the text column occupies, including its margins and the room the
+ * grid needs to step into. */
+static uint32_t text_block(void)
+{
+    return (con.cols + 2 * MARGIN_COLS) * FONT_WIDTH + SHIFT_TRAVEL;
+}
+/* Where the emblem goes: centred in the half the text is not using, so the two
+ * trade places on a swap. A solid mark is the worst thing on this panel -- it
+ * is saturated, it is dense, and it never changes -- so it has to travel
+ * further than the 32 pixels the grid gives it. If there is no room to take
+ * sides, it stays centred and only the grid moves it. */
+static void emblem_place(uint32_t *x, uint32_t *y)
+{
+    uint32_t block = text_block();
+    /* Height moves on a three-step cycle while the side alternates on a two-step
+     * one, so the mark works through six places before it repeats rather than
+     * two -- at five minutes a swap that is half an hour of travel. Step zero is
+     * centred, so the screen looks deliberate the moment it is drawn. */
+    uint32_t base = (con.height - con.emblem_size) / 2;
+    uint32_t quarter = (con.height - con.emblem_size) / 4;
+    switch (con.swap_n % 3) {
+    case 1:  *y = base + quarter; break;
+    case 2:  *y = base - quarter; break;
+    default: *y = base; break;
+    }
+    if (block >= con.width || con.emblem_size >= con.width - block) {
+        *x = (con.width - con.emblem_size) / 2;
+        return;
+    }
+    uint32_t free_start = con.text_x ? 0 : block;        /* the half without text */
+    *x = free_start + ((con.width - block) - con.emblem_size) / 2;
+}
+void con_emblem(const uint8_t *image, uint32_t size)
+{
+    if (!con.ready || !image || !size || size > con.width || size > con.height) return;
+    con.emblem = image;
+    con.emblem_size = size;
+    emblem_place(&con.emblem_x, &con.emblem_y);
+    con_logo_at(image, size, con.emblem_x, con.emblem_y);
 }
 uint32_t con_rows(void) { return con.rows; }
 uint32_t con_cols(void) { return con.cols; }
@@ -114,6 +167,7 @@ void con_clear(void)
     fill(0, 0, con.width, con.height, 0x000000);
     con.shift_x = sx; con.shift_y = sy;
     con.row = con.col = 0;
+    con.text_x = 0;
 }
 
 /* Move the console one step around the anti-burn-in grid, taking the pixels
@@ -130,7 +184,7 @@ void con_clear(void)
  * the whole exercise is pointless. */
 void con_shift_next(void)
 {
-    if (!con.ready || !con.pixels) return;
+    if (!con.ready || !con.pixels || !con.retains) return;
     con.shift_n++;
     uint32_t nx = (con.shift_n % SHIFT_GRID) * SHIFT_STEP;
     uint32_t ny = ((con.shift_n / SHIFT_GRID) % SHIFT_GRID) * SHIFT_STEP;
@@ -138,7 +192,7 @@ void con_shift_next(void)
     int dy = (int)ny - (int)con.shift_y;
     if (!dx && !dy) return;
 
-    uint32_t limit = (SHIFT_GRID - 1) * SHIFT_STEP;
+    uint32_t limit = SHIFT_TRAVEL;
     if (con.width <= limit || con.height <= limit) return;
     uint32_t w = con.width - limit;              /* the area that always exists */
     uint32_t h = con.height - limit;
@@ -165,11 +219,81 @@ void con_shift_next(void)
     con.shift_x = sx; con.shift_y = sy;
     __asm__ volatile("dsb sy" ::: "memory");
 }
+/* Park the text column on the other side of the panel, carrying the log across.
+ *
+ * The grid above moves the image 32 pixels. That is enough to stop one
+ * sub-pixel holding one glyph stroke for hours, and it does nothing at all
+ * about the larger pattern: with a centred emblem the text occupies one half of
+ * the panel and the other half is black for as long as the machine is up. This
+ * swaps those halves, so each side gets its turn being dark.
+ *
+ * The emblem does not move. It is drawn once, centred, through put_pixel, and
+ * the swap deliberately touches only the text block on one side of it -- the
+ * mirrored position is the same size by construction, because con_reserve_centre
+ * sized the column to fit beside a centred image.
+ *
+ * No-op when the text already spans the panel, as it does with the corner
+ * emblem: there is nowhere to put it. */
+void con_swap_side(void)
+{
+    if (!con.ready || !con.pixels || !con.retains) return;
+    uint32_t block = (con.cols + 2 * MARGIN_COLS) * FONT_WIDTH;
+    if (block + SHIFT_TRAVEL >= con.width) return;
+    uint32_t to = con.text_x ? 0 : con.width - block - SHIFT_TRAVEL;
+    if (to == con.text_x) return;
+
+    /* Clear the emblem before the text moves. The text is about to be copied
+     * over where it stood, but only where the two happen to overlap, and a
+     * saturated mark left burning in the background is the thing being fixed. */
+    if (con.emblem) {
+        uint32_t sx = con.shift_x, sy = con.shift_y;
+        con.shift_x = con.shift_y = 0;
+        fill(con.emblem_x + sx, con.emblem_y + sy, con.emblem_size, con.emblem_size, 0x000000);
+        con.shift_x = sx; con.shift_y = sy;
+    }
+
+    uint32_t h = (con.rows + 2 * MARGIN_ROWS) * FONT_HEIGHT;
+    if (con.shift_y + h > con.height) h = con.height - con.shift_y;
+    uint32_t from_x = con.text_x + con.shift_x;
+    uint32_t to_x = to + con.shift_x;
+
+    /* Same direction rule as the grid copy: for a rightward move, start at the
+     * far end, in case the two positions overlap on a narrower panel. */
+    for (uint32_t y = 0; y < h; y++) {
+        volatile uint32_t *row = con.pixels + (uint64_t)(y + con.shift_y) * con.stride;
+        if (to_x > from_x)
+            for (uint32_t x = block; x-- > 0;) row[to_x + x] = row[from_x + x];
+        else
+            for (uint32_t x = 0; x < block; x++) row[to_x + x] = row[from_x + x];
+    }
+
+    /* Blank what the text vacated -- the whole point is that the side it left
+     * goes dark. Only the part that the new position does not already cover,
+     * so an overlapping move does not erase what was just written. */
+    uint32_t dead = from_x, dead_end = from_x + block;
+    if (to_x > from_x) { if (dead_end > to_x) dead_end = to_x; }
+    else               { if (dead < to_x + block) dead = to_x + block; }
+    if (dead < dead_end) {
+        uint32_t sx = con.shift_x, sy = con.shift_y;
+        con.shift_x = con.shift_y = 0;
+        fill(dead, sy, dead_end - dead, h, 0x000000);
+        con.shift_x = sx; con.shift_y = sy;
+    }
+    con.text_x = to;
+    /* Redraw rather than copy: the source bytes are still in the image, so the
+     * mark lands exactly right on the side the text just left. */
+    if (con.emblem) {
+        con.swap_n++;
+        emblem_place(&con.emblem_x, &con.emblem_y);
+        con_logo_at(con.emblem, con.emblem_size, con.emblem_x, con.emblem_y);
+    }
+    __asm__ volatile("dsb sy" ::: "memory");
+}
 void con_bar(uint32_t rgb) { fill(0, 0, con.width, 8, rgb); }
 void con_at(uint32_t row, uint32_t col) { con.row = row; con.col = col; }
 void con_clear_row(uint32_t row)
 {
-    fill(MARGIN_COLS * FONT_WIDTH, (MARGIN_ROWS + row) * FONT_HEIGHT,
+    fill(con.text_x + MARGIN_COLS * FONT_WIDTH, (MARGIN_ROWS + row) * FONT_HEIGHT,
          con.cols * FONT_WIDTH, FONT_HEIGHT, 0x000000);
 }
 
@@ -179,7 +303,7 @@ static void scroll(void)
     /* This is the one drawing path that does not go through put_pixel -- it
      * moves whole rows -- so it carries the shift itself. */
     uint32_t top = MARGIN_ROWS * FONT_HEIGHT + con.shift_y;
-    uint32_t left = MARGIN_COLS * FONT_WIDTH + con.shift_x;
+    uint32_t left = con.text_x + MARGIN_COLS * FONT_WIDTH + con.shift_x;
     uint32_t span = con.cols * FONT_WIDTH;
     for (uint32_t y = 0; y + FONT_HEIGHT < con.rows * FONT_HEIGHT; y++) {
         volatile uint32_t *destination = con.pixels + (uint64_t)(top + y) * con.stride + left;
@@ -201,7 +325,7 @@ static void put(char c)
     uint8_t glyph = (uint8_t)c;
     if (glyph < FONT_FIRST || glyph > FONT_LAST) glyph = '?';
     const uint8_t *bitmap = q1n1_font + (uint32_t)(glyph - FONT_FIRST) * FONT_WIDTH * FONT_HEIGHT;
-    uint32_t x = (MARGIN_COLS + con.col) * FONT_WIDTH;
+    uint32_t x = con.text_x + (MARGIN_COLS + con.col) * FONT_WIDTH;
     uint32_t y = (MARGIN_ROWS + con.row) * FONT_HEIGHT;
     for (uint32_t j = 0; j < FONT_HEIGHT; j++)
         for (uint32_t i = 0; i < FONT_WIDTH; i++) {

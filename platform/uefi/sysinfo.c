@@ -119,6 +119,54 @@ void sysinfo_smbios(uint64_t entry_point)
     }
 }
 
+/* Machines whose panel retains a static image, by SMBIOS product substring.
+ * One entry per machine, deliberately: this is a hardware fact per laptop, and
+ * guessing it wrong either burns a panel or moves a console that had no reason
+ * to move. UX3607OA is the ASUS Zenbook A16, whose product string reads
+ * "Zenbook A16 UX3607OA". */
+static const char *const oled_products[] = { "UX3607OA" };
+
+/* Substring search over an untrusted firmware string. `limit` bounds the whole
+ * read, not just where a match may start: a string set that is missing its
+ * terminator must not walk the comparison off the end of the table. */
+static int contains(const uint8_t *text, const char *needle, unsigned limit)
+{
+    for (unsigned start = 0; start < limit && text[start]; start++) {
+        unsigned k = 0;
+        while (needle[k] && start + k < limit && text[start + k] == (uint8_t)needle[k]) k++;
+        if (!needle[k]) return 1;
+        if (start + k >= limit || !text[start + k]) break;
+    }
+    return 0;
+}
+
+int sysinfo_panel_retains(uint64_t smbios_entry_point)
+{
+    const uint8_t *entry = (const void *)(uintptr_t)smbios_entry_point;
+    if (!entry || !match(entry, "_SM3_", 5)) return 0;
+    const uint8_t *table = (const void *)(uintptr_t)get64(entry + 16);
+    uint32_t span = get32(entry + 12);
+    if (!table || !span || span > (1u << 20)) return 0;
+    const uint8_t *cursor = table;
+    unsigned seen = 0;
+    while (cursor + 4 < table + span && seen++ < 256) {
+        uint8_t type = cursor[0], length = cursor[1];
+        if (length < 4) break;
+        if (type == 1) {               /* System Information */
+            const uint8_t *product = smbios_string(cursor, cursor[5]);
+            if (product)
+                for (unsigned n = 0; n < sizeof(oled_products) / sizeof(*oled_products); n++)
+                    if (contains(product, oled_products[n], 64)) return 1;
+            return 0;                  /* named, and not one of ours */
+        }
+        const uint8_t *next = cursor + length;
+        while (next + 1 < table + span && (next[0] || next[1])) next++;
+        cursor = next + 2;
+        if (type == 127) break;
+    }
+    return 0;
+}
+
 /* The ACPI tables that describe what m1n1 reports from the Apple device tree. */
 void sysinfo_acpi(uint64_t rsdp_address, uint64_t *cores)
 {
