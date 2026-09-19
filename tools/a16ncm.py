@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Drive the q1n1 proxy over the NCM link instead of the USB0 console.
+"""Speak q1n1 over USB NCM using unprivileged IPv6 UDP.
 
-Two sides, because the target can only serve one transport at a time:
-
-  serve   over the USB0 console, calls q1n1_ncm_proxy_run() on the target. That
-          blocks the console loop, so this side just waits for it to return.
-  talk    over raw Ethernet on the Mac's NCM interface, speaks the proxy
-          protocol to the target. Needs root for BPF.
-
-The target's transport has a watchdog: when the Ethernet side goes quiet for
-the configured time it leaves the loop and the console takes over again, so a
-failed experiment does not strand the machine.
-
-Symbol addresses come from the stage ELF rather than bootinfo, because these
-entry points exist for bring-up and are not part of the hand-off contract.
+Current payloads serve both ports automatically. The legacy serve command is
+retained for older payloads that require an explicit transport handoff.
 """
 import argparse
 import struct
@@ -58,8 +47,12 @@ def stage_for(proxy):
 
 def cmd_serve(args):
     proxy = q1n1.connect(device=args.device)
-    table = stage_for(proxy)
     info = proxy.bootinfo()
+    if info.get('usb_ports'):
+        proxy.link.close()
+        print('Both ports are already served automatically; use talk or q1n1proxy.py.')
+        return 0
+    table = stage_for(proxy)
     print(f"generation {info['stage_generation']}, image {info['image_base']:#x}")
 
     if args.retry:
@@ -78,6 +71,20 @@ def cmd_serve(args):
 
 
 def cmd_talk(args):
+    if not args.interface:
+        names = udplink.find_interfaces()
+        if not names:
+            raise SystemExit('no active Apple USB NCM interface')
+        for name in names:
+            try:
+                probe = q1n1.connect(device='udp://' + name, wait=1)
+                probe.link.close()
+                args.interface = name
+                break
+            except (OSError, q1n1.ProxyError):
+                continue
+        if not args.interface:
+            raise SystemExit('no responding q1n1 USB NCM endpoint')
     mac = bytes.fromhex(args.mac.replace(':', '')) if args.mac else None
     address = udplink.target_address(args.interface, mac)
     transport = udplink.UdpTransport(args.interface, address)
@@ -147,7 +154,7 @@ def main():
                        help='bring the NCM link up first (after a replug)')
 
     talk = sub.add_parser('talk', help='speak the proxy protocol over raw Ethernet')
-    talk.add_argument('--interface', default='en5', help="the Mac's NCM interface")
+    talk.add_argument('--interface', help="the Mac's NCM interface (default: discover active USB NCM ports)")
     talk.add_argument('--seconds', type=float, default=3.0, help='round-trip benchmark length')
     talk.add_argument('--wait', type=float, default=20.0, help='seconds to wait for an answer')
     talk.add_argument('--mac', help="the MAC the NCM descriptor assigned this host "

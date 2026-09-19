@@ -30,6 +30,7 @@ python3 tools/test-uefi.py --proxy   # QEMU boots the real binary to EL2
 python3 tools/test-q1n1-proxy.py     # native, ASan/UBSan
 python3 tools/test-q1n1-xhci.py
 python3 tools/test-q1n1-ncmproxy.py
+python3 tools/test-q1n1-ports.py
 ```
 
 The native suites link a driver against a register model — no firmware, no

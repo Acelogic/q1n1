@@ -26,14 +26,14 @@ of the running machine over the proxy while it sat at EL2.*
   failed payload falls back to it.
 - **Chainloading**: replace the running EL2 code in ~0.3 s without rebooting,
   which is what makes this iterable at all.
-- **Its own USB stack, both directions and both ends of the cable.** q1n1 drives
-  the USB0 DWC3 as a device for a CDC ACM console, and drives USB1 as an xHCI
-  *host* to enumerate the Mac at the other end of a bare C-to-C cable as a
-  CDC-NCM adapter — the proxy then runs over it as UDP over IPv6 link-local, at
-  4.6 MB/s write and 8.5 MB/s read. When the cable leaves USB1 in host mode with
-  nothing attached, q1n1 instead offers CDC device mode there and serves the
-  same proxy directly, with no dock in the path. See
-  [A16-DIRECT-USB-C.md](docs/A16-DIRECT-USB-C.md).
+- **Its own USB stack on both A16 ports.** Each controller discovers a working
+  host/NCM or device/CDC connection, recovers after cable moves, and serves the
+  proxy independently. The Mac reader discovers either transport without a
+  fixed serial path or network-interface number. Direct connections passed all
+  six Mac/A16 port pairings; dock connections passed both A16 ports on the
+  tested working Mac port. See the
+  [port qualification record](docs/A16-USB-PORT-INDEPENDENCE.md) for evidence
+  and the remaining dock qualification limits.
 - **UCSI 2.1** register access and connector queries.
 
 Not yet: the guest hypervisor, SMP, or any Apple-specific drivers.
@@ -47,6 +47,7 @@ that turned out to be wrong:
 | --- | --- |
 | [A16-INSTALL.md](docs/A16-INSTALL.md) | build, install, boot, connect, recover |
 | [A16-Q1N1-PROXY.md](docs/A16-Q1N1-PROXY.md) | EL2 proxy, boot control, xHCI/NCM, the UDP transport |
+| [A16-USB-PORT-INDEPENDENCE.md](docs/A16-USB-PORT-INDEPENDENCE.md) | dual-controller recovery, automatic discovery, physical port qualification |
 | [A16-DIRECT-USB-C.md](docs/A16-DIRECT-USB-C.md) | dock-free direct USB-C, and the data-role dead ends |
 | [A16-FIRST-EL2-BOOT.md](docs/A16-FIRST-EL2-BOOT.md) | first EL2 execution on hardware |
 | [A16-USB-EL2-SERIAL.md](docs/A16-USB-EL2-SERIAL.md) | USB after ExitBootServices |
@@ -69,11 +70,12 @@ python3 tools/test-uefi.py --proxy
 python3 tools/test-q1n1-proxy.py
 python3 tools/test-q1n1-xhci.py
 python3 tools/test-q1n1-ncmproxy.py
+python3 tools/test-q1n1-ports.py
 ```
 
 QEMU does not model this machine's Type-C hardware, so the direct-USB path is
 covered by the native tests plus the hardware logs cited in
-[A16-DIRECT-USB-C.md](docs/A16-DIRECT-USB-C.md).
+[A16-USB-PORT-INDEPENDENCE.md](docs/A16-USB-PORT-INDEPENDENCE.md).
 
 ## Boot emblem
 

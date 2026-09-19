@@ -1,5 +1,11 @@
 # q1n1 at EL2 with the m1n1 proxy, and one-command boots into it
 
+**2026-09-19 update:** both USB controllers now discover host/NCM or device/CDC
+independently, and the reader follows Mac port changes automatically. See
+[port independence and physical qualification](A16-USB-PORT-INDEPENDENCE.md)
+for the current implementation, regression checks and installation status.
+The dated records below describe the earlier bring-up stages.
+
 **Status: working on the physical A16 (UX3607OA, BIOS312) on 2026-09-17.**
 `q1n1.efi` itself now owns the USB controller after ExitBootServices and serves
 m1n1's proxy protocol, and a single Mac command puts the laptop into q1n1 from
@@ -26,8 +32,9 @@ takeover test apps this payload replaces).
 1. **Boot window (boot services).** The firmware's USB Function driver brings
    USB0 up in device mode through the physically proven serial-v3 path and
    enumerates as `1209:316d` serial `A16-Q1N1-BOOT`. The Mac, or the laptop
-   keyboard, chooses `proxy`, `proxy once`, `windows` or `shell`. The default on
-   timeout, on any refusal, and when no host answers is **Windows**.
+   keyboard, chooses `proxy`, `proxy once`, `windows` or `shell`. With the
+   installed `--auto` option, timeout selects q1n1; an explicit `windows`
+   choice or a refusal returns to Windows.
 2. **Handover.** For `proxy` it arms `BootNext` (see below), snapshots the DWC3
    and qscratch registers while firmware still owns them, stops the firmware
    driver, snapshots again, validates the pair, allocates a 1 MiB DMA arena
@@ -63,9 +70,10 @@ consumes on the next boot. When the boot window is told `proxy`, it verifies
 that `BootCurrent` is the Windows-created *q1n1 UEFI Shell* entry
 (`{cef50169-…}`, pointing at `\EFI\q1n1\shellaa64.efi`) and writes that number
 to `BootNext`. Any reset from the q1n1 session therefore lands back in the boot
-window, which re-arms it — a loop that never passes through Windows. Because
-the window's default is Windows, an unattended laptop still ends up in Windows
-about half a minute after a reset, which keeps ssh as the recovery channel.
+window, which re-arms it — a loop that never passes through Windows. In the
+installed `--auto` mode, it selects q1n1 after 25 seconds even if USB0
+enumerated but the host never claimed it. Windows remains the explicit or
+refusal fallback.
 
 Runtime `SetVariable` is unsupported on Qualcomm UEFI (Linux needs the
 `qseecom` uefisecapp path for EFI variables), so arming happens in boot services
@@ -78,14 +86,14 @@ The ESP carries `\startup.nsh`, which the q1n1 shell entry runs:
 if not exist fs2:\EFI\q1n1\q1n1-usb.efi then
   fs2:\EFI\Microsoft\Boot\bootmgfw.efi
 endif
-fs2:\EFI\q1n1\q1n1-usb.efi --boot
+fs2:\EFI\q1n1\q1n1-usb.efi --boot --auto
 if %lasterror% == 0 then
   fs2:\EFI\Microsoft\Boot\bootmgfw.efi
 endif
 ```
 
-Only an explicit `shell` choice returns nonzero, so every other outcome —
-including every refusal — boots Windows. `tools/disable-a16-q1n1-boot.ps1`
+Only an explicit `shell` choice returns nonzero. Explicit Windows and every
+refusal boot Windows. `tools/disable-a16-q1n1-boot.ps1`
 removes the script again (it is hash-checked first), which the older one-time
 probe scripts need, since they refuse to run while a `\startup.nsh` exists.
 
@@ -805,6 +813,17 @@ arena. From generation 21 on, none.
 Evidence: `build/a16-install/q1n1-link-survives-chainload.json`.
 
 ## Booting without the dock, 2026-09-17 22:30–23:15Z
+
+**2026-09-19 update:** The installed `--auto` mode now also selects q1n1 when
+USB0 enumerates but the host sends no command before timeout. Previously that
+case fell through to Windows. The direct USB1 path below remains the path when
+USB0 never enumerates. The rebuilt EFI (`SHA256
+e0aee7e7c736831c48c039f68787c99deac6562cab9f28ab4fe5f00711d1215f`) was
+installed on the A16 at 17:34Z through the existing guarded installer. It
+backed up the previous payload and verified that the Windows boot manager and
+Windows-first boot order were preserved. Native checks, QEMU proxy, and QEMU
+boot-window refusal passed. A live q1n1 boot and direct USB enumeration are
+still unverified; the Mac's IOUSB tree had no attached device at install time.
 
 Everything above still needed the dock to *start* q1n1: the boot window runs on
 USB0's CDC console, and it times out to Windows, so with no dock nobody ever

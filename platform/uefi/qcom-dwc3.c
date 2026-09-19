@@ -586,7 +586,13 @@ void qdwc3_stop(struct qdwc3 *d)
                        DWC3_DEPCMD_PARAM((rd(d, DWC3_DEPCMD(ep)) >> 16) & 0x7f), 0, 0, 0);
     wr(d, DWC3_DEVTEN, 0);
     mask(d, DWC3_DCTL, DWC3_DCTL_RUN_STOP, 0);
-    poll_bits(d, DWC3_DSTS, DWC3_DSTS_DEVCTRLHLT, DWC3_DSTS_DEVCTRLHLT, 500);
+    if (poll_bits(d, DWC3_DSTS, DWC3_DSTS_DEVCTRLHLT, DWC3_DSTS_DEVCTRLHLT, 500)) {
+        /* Pending control transfers can prevent a graceful halt after the
+         * reader vanishes. Reset this owned device engine before reusing its
+         * DMA or handing off; callers still verify DEVCTRLHLT before reuse. */
+        mask(d, DWC3_DCTL, 0, DWC3_DCTL_CSFTRST);
+        poll_bits(d, DWC3_DCTL, DWC3_DCTL_CSFTRST, 0, 1000);
+    }
     /* Present a clean disconnect to the host before the reset. */
     qdwc3_wr(d->qscratch + QSCRATCH_HS_PHY_CTRL,
              qdwc3_rd(d->qscratch + QSCRATCH_HS_PHY_CTRL) & ~(UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL));

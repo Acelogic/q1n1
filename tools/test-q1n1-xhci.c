@@ -61,6 +61,7 @@ static struct {
 
     struct sim_slot slot[SIM_SLOTS];
     int running;
+    int reset_stuck;
 
     /* the simulated NCM device */
     uint32_t configuration, alternate[4];
@@ -384,6 +385,10 @@ void xhci_wr32(uintptr_t address, uint32_t value)
         uint32_t previous = mmio_r32(offset);
         uint32_t port = (offset - op_offset() - 0x400) / 0x10 + 1;
         if (value & (1u << 4)) {                      /* PR: reset completes at once */
+            if (sim.reset_stuck) {
+                mmio_w32(offset, previous | (1u << 4));
+                return;
+            }
             mmio_w32(offset, 0xe03 | (1u << 21));     /* enabled, U0, high speed, PRC */
             sim_event((uint64_t)port << 24, 1u << 24, 34u << 10);
         } else {
@@ -603,6 +608,12 @@ int main(void)
     check(xhci_init(&x, sim.base, arena, sizeof(arena)) == 0, "init with no device");
     mmio_w32(op_offset() + 0x400, 0x2a0);          /* clear the connect */
     check(xhci_wait_port(&x, 5) == 0, "wait_port reports nothing attached");
+    mmio_w32(op_offset() + 0x400, 0xe03 | (1u << 21));
+    sim.reset_stuck = 1;
+    check(xhci_wait_port(&x, 5) == 0, "stale PRC/PED cannot make an unfinished reset succeed");
+    check(!(mmio_r32(op_offset() + 0x400) & (1u << 21)), "old reset completion was acknowledged");
+    sim.reset_stuck = 0;
+    check(xhci_wait_port(&x, 5) == 1, "fresh reset recovers the same connected port");
 
     if (failures) {
         printf("FAILED: %d of %d checks\n", failures, checks + failures);

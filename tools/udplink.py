@@ -3,14 +3,14 @@
 """UDP-over-IPv6 transport for the q1n1 proxy on the NCM link.
 
 q1n1 answers neighbour solicitations and speaks UDP itself, so this side is an
-ordinary unprivileged socket -- no BPF, no root. The target's address is the
-link-local EUI-64 of the MAC its NCM function assigned the host, which means it
-can be computed here rather than configured.
+ordinary unprivileged socket -- no BPF, no root. Discovery uses the Mac's
+USB-device NCM driver and the target's fixed link-local address fe80::4919.
 
 Presents the same read(count, timeout) / write(data) surface as
 q1n1proxy.Transport, so q1n1proxy.Link drives it unchanged.
 """
 import socket
+import plistlib
 import struct
 import subprocess
 import sys
@@ -29,21 +29,51 @@ def link_local(mac):
     return socket.inet_ntop(socket.AF_INET6, b'\xfe\x80' + b'\0' * 6 + eui)
 
 
-def find_interface(prefix=b'\x12\x77\x60'):
-    """The NCM interface, by the MAC prefix the Mac's device mode uses."""
-    names = subprocess.run(['ifconfig', '-l'], capture_output=True, text=True).stdout.split()
-    best = None
-    for name in names:
-        if not name.startswith('en'):
-            continue
-        text = subprocess.run(['ifconfig', name], capture_output=True, text=True).stdout
-        for line in text.splitlines():
-            parts = line.split()
-            if parts and parts[0] == 'ether' and bytes.fromhex(parts[1].replace(':', '')).startswith(prefix):
-                if 'status: active' in text:
-                    return name
-                best = best or name
-    return best
+def ncm_interface_names(nodes):
+    """BSD interfaces under an Apple USB-device NCM data driver, not LAN/Wi-Fi."""
+    names = set()
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        name = node.get('BSD Name', '')
+        if isinstance(name, str) and name.startswith('en') and name[2:].isdigit():
+            names.add(name)
+        for child in node.get('IORegistryEntryChildren', []):
+            walk(child)
+
+    for node in nodes if isinstance(nodes, list) else [nodes]:
+        walk(node)
+    return sorted(names, key=lambda name: int(name[2:]))
+
+
+def find_interfaces(active_only=True):
+    """Discover each Mac port's NCM interface without a fixed name or MAC."""
+    try:
+        result = subprocess.run(['ioreg', '-a', '-l', '-r', '-c', 'AppleUSBDeviceNCM11Data'],
+                                capture_output=True, timeout=3, check=True)
+        if not result.stdout.strip():
+            return []
+        names = ncm_interface_names(plistlib.loads(result.stdout))
+        if not active_only:
+            return names
+        active = []
+        for name in names:
+            try:
+                state = subprocess.run(['ifconfig', name], capture_output=True,
+                                       text=True, timeout=2, check=True).stdout
+            except (OSError, subprocess.SubprocessError):
+                continue  # A port removed during inventory must not hide the others.
+            if 'status: active' in state:
+                active.append(name)
+        return active
+    except (OSError, ValueError, plistlib.InvalidFileException, subprocess.SubprocessError):
+        return []
+
+
+def find_interface():
+    names = find_interfaces()
+    return names[0] if names else None
 
 
 def interface_mac(name):
@@ -102,10 +132,14 @@ class UdpTransport:
                 break
             except OSError:
                 continue
-        self.rcvbuf = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
-        self.socket.bind(('::', 0))
-        self.socket.setblocking(False)
-        self.peer = (address, port, 0, self.scope)
+        try:
+            self.rcvbuf = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+            self.socket.bind(('::', 0))
+            self.socket.setblocking(False)
+            self.peer = (address, port, 0, self.scope)
+        except Exception:
+            self.socket.close()
+            raise
 
     def close(self):
         self.socket.close()
@@ -114,13 +148,21 @@ class UdpTransport:
         got = 0
         while True:
             try:
-                data, _ = self.socket.recvfrom(65535)
+                data, peer = self.socket.recvfrom(65535)
             except BlockingIOError:
                 return got
             except OSError:
                 return got
             if not data:
                 return got
+            # Two simultaneous cables and stale UDP replies must not mix byte
+            # streams. Accept only this exact link-local peer and proxy port.
+            if (peer[1] != self.port or peer[3] not in (0, self.scope)
+                    or socket.inet_pton(socket.AF_INET6, peer[0].split('%')[0]) !=
+                    socket.inet_pton(socket.AF_INET6, self.address.split('%')[0])):
+                continue
+            if len(self.buffer) + len(data) > 8 << 20:
+                raise UdpError('proxy receive buffer exceeded 8 MiB')
             self.buffer += data
             self.frames_in += 1
             got += 1

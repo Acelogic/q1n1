@@ -16,6 +16,10 @@ struct q1n1_io {
      * an Ethernet link, unlike the console -- does not strand the machine. */
     int (*abort)(void *ctx);
     void *ctx;
+    /* Release transport ownership after a complete or abandoned request. */
+    void (*end)(void *ctx);
+    /* Optional per-connection checksum negotiation state. */
+    int *(*checksum_state)(void *ctx);
 };
 
 #define Q1N1_GUARD_OFF 0

@@ -57,13 +57,13 @@ CHOICES = {'q1n1': 'proxy', 'q1n1-once': 'proxy once', 'windows': 'windows',
 DEFAULT_TARGET = os.environ.get('A16_SSH_TARGET', '')
 DEFAULT_ALIAS = os.environ.get('A16_SSH_ALIAS', '')
 DEFAULT_CONTROL = Path.home() / '.ssh' / 'a16-q1n1.sock'
-REMOTE_DIR = os.environ.get('A16_REMOTE_DIR', r'C:\q1n1-bringup')
+REMOTE_DIR = os.environ.get('A16_REMOTE_DIR')
 
 
 def ports(serial, interface=1):
     try:
         if serial == PROXY_SERIAL:
-            return q1n1proxy.find_ports(serial, interface)
+            return q1n1proxy.discover_endpoints(serial, interface)
         found, _ = watcher.inventory(serial, interface)
         return found
     except Exception:
@@ -103,8 +103,20 @@ def run_powershell(args, script, timeout=120):
 
 def state(args):
     """Where is the A16 right now?"""
-    if ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE):
+    candidates = ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE)
+    if any(not path.startswith('udp://') for path in candidates):
         return 'proxy'
+    if candidates:
+        # An active Mac NCM interface alone does not identify q1n1.
+        try:
+            proxy = q1n1proxy.connect()
+            try:
+                proxy.bootinfo()
+            finally:
+                proxy.link.close()
+            return 'proxy'
+        except (OSError, q1n1proxy.ProxyError):
+            pass
     if ports(BOOT_SERIAL):
         return 'boot-window'
     if ports(UEFI_SERIAL):
@@ -182,14 +194,14 @@ def claim_window(args, choice, timeout=180):
 
     kind, paths = wait_for(reachable, timeout, 'neither the q1n1 boot window nor the requested proxy appeared')
     if kind == 'proxy':
-        proxy = q1n1proxy.connect(paths[0], wait=15)
+        proxy = q1n1proxy.connect(wait=15)
         try:
             info = proxy.bootinfo()
             if info['current_el'] != 2 or not info['return_armed']:
                 raise SystemExit('direct proxy appeared but did not confirm EL2 and an armed return')
         finally:
             proxy.link.close()
-        print(f'--auto reached the EL2 proxy directly on {paths[0]}')
+        print(f'--auto reached the EL2 proxy directly on {proxy.endpoint}')
         return 'OK proxy return=armed (automatic direct USB boot)'
     print(f'boot window on {paths[0]}; sending {choice!r}')
     window = BootWindow(paths[0], verbose=args.verbose)
@@ -202,9 +214,25 @@ def claim_window(args, choice, timeout=180):
 
 
 def reboot_from_windows(args):
+    if REMOTE_DIR:
+        directory = REMOTE_DIR.replace("'", "''")
+        select_dir = f"$q1n1Dir = '{directory}'"
+    else:
+        select_dir = r"""
+$q1n1Dir = 'C:\q1n1-bringup'
+if (-not (Test-Path -LiteralPath (Join-Path $q1n1Dir 'boot-a16-q1n1.ps1'))) {
+    $candidates = @(Get-ChildItem -LiteralPath $env:USERPROFILE -Directory -Filter 'q1n1-bringup*' |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'boot-a16-q1n1.ps1') })
+    if ($candidates.Count -ne 1) {
+        throw "Expected one q1n1 bring-up directory under $env:USERPROFILE; found $($candidates.Count). Set A16_REMOTE_DIR to select one."
+    }
+    $q1n1Dir = $candidates[0].FullName
+}
+"""
     script = f"""
 $ErrorActionPreference='Stop'
-Set-Location '{REMOTE_DIR}'
+{select_dir}
+Set-Location -LiteralPath $q1n1Dir
 .\\boot-a16-q1n1.ps1
 """
     print('asking Windows to arm BootNext for the q1n1 shell entry and restart')
@@ -219,8 +247,8 @@ def reboot_from_proxy(_args):
     paths = ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE)
     if not paths:
         return False
-    print(f'asking the EL2 proxy on {paths[0]} to reset')
-    proxy = q1n1proxy.connect(paths[0])
+    proxy = q1n1proxy.connect()
+    print(f'asking the EL2 proxy on {proxy.endpoint} to reset')
     try:
         info = proxy.bootinfo()
         if not info['return_armed']:
@@ -229,7 +257,7 @@ def reboot_from_proxy(_args):
         # The reset request has no reply. Keep the tty open until the target
         # disconnects, both to let queued bytes leave and to avoid claiming the
         # old proxy as a successful automatic boot if the reset never happened.
-        wait_for(lambda: paths[0] not in ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE),
+        wait_for(lambda: proxy.endpoint not in ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE),
                  15, 'the proxy did not disconnect after the reset request')
     finally:
         proxy.link.close()
@@ -241,16 +269,20 @@ def command_status(args):
     print(f'A16 state: {where}')
     if where == 'proxy':
         try:
-            proxy = q1n1proxy.connect(ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE)[0])
-            info = proxy.bootinfo()
+            proxy = q1n1proxy.connect()
+            try:
+                info = proxy.bootinfo()
+                endpoint = proxy.endpoint
+            finally:
+                proxy.link.close()
         except (q1n1proxy.ProxyError, OSError) as problem:
             print(f'  port present but the target is not answering ({problem})')
-            print('  the payload is wedged: hold the power button, then a16ctl.py boot q1n1')
+            print('  no proxy handshake succeeded; check cable and port status')
             return 1
         print(f"  EL{info['current_el']} proxy, image {info['image_base']:#x}, heap {info['heap_base']:#x}")
         print(f"  BootCurrent {info['boot_current']:#06x}, reset returns to q1n1: {bool(info['return_armed'])}")
         console = ports(PROXY_SERIAL, q1n1proxy.CONSOLE_INTERFACE)
-        print(f"  proxy port {ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE)[0]}"
+        print(f"  proxy endpoint {endpoint}"
               + (f", console port {console[0]}" if console else ''))
     elif where == 'boot-window':
         print(f'  waiting for a choice on {ports(BOOT_SERIAL)[0]} (default: Windows)')
@@ -292,9 +324,12 @@ def command_boot(args):
     if target.startswith('q1n1'):
         paths = wait_for(lambda: ports(PROXY_SERIAL, q1n1proxy.PROXY_INTERFACE), 120,
                          'the EL2 proxy port did not appear')
-        proxy = q1n1proxy.connect(paths[0], wait=30)
-        info = proxy.bootinfo()
-        print(f"q1n1 proxy ready on {paths[0]}: EL{info['current_el']}, "
+        proxy = q1n1proxy.connect(wait=30)
+        try:
+            info = proxy.bootinfo()
+        finally:
+            proxy.link.close()
+        print(f"q1n1 proxy ready on {proxy.endpoint}: EL{info['current_el']}, "
               f"heap {info['heap_base']:#x}, reset returns to q1n1: {bool(info['return_armed'])}")
     elif target == 'windows':
         wait_for(lambda: ssh_reachable(args), 300, 'Windows did not come back on the network')

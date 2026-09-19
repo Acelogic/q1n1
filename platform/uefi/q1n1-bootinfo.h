@@ -28,8 +28,10 @@ struct q1n1_bootinfo {
      * that silently returns neighbouring fields when a struct changes -- three
      * times in one session, each time as convincing nonsense. */
     uint64_t ncm_proxy_stats;
+    /* Optional extension; readers must honor size when talking to older images. */
+    uint64_t usb_ports, usb_port_count;
 };
-_Static_assert(sizeof(struct q1n1_bootinfo) == 49 * 8, "bootinfo layout");
+_Static_assert(sizeof(struct q1n1_bootinfo) == 51 * 8, "bootinfo layout");
 
 /* A chainloaded stage starts here with x0 = the inherited bootinfo. */
 void q1n1_stage_main(struct q1n1_bootinfo *inherited);

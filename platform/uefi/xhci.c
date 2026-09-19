@@ -329,13 +329,23 @@ uint32_t xhci_wait_port(struct xhci *x, uint32_t timeout_ms)
     } while (xhci_now_us() < deadline);
     if (!port) return 0;
 
-    portsc_write(x, port, P_CSC);
+    /* A previous controller instance can leave PRC/PED latched. Clear the old
+     * completion before requesting a new reset; stale PED is not proof that
+     * this reset completed or that the device is at address zero. */
+    portsc_write(x, port, P_PRC | P_WRC | P_CSC | P_PEC | P_PLC);
     portsc_write(x, port, P_PR);
     uint64_t reset_deadline = xhci_now_us() + 1000 * 1000;
+    int reset_complete = 0;
     while (xhci_now_us() < reset_deadline) {
-        if (xhci_portsc(x, port) & (P_PRC | P_WRC)) break;
+        uint32_t status = xhci_portsc(x, port);
+        if (!(status & P_CCS)) return 0;
+        if (!(status & P_PR) && (status & P_PED) && (status & (P_PRC | P_WRC))) {
+            reset_complete = 1;
+            break;
+        }
         xhci_delay_us(1000);
     }
+    if (!reset_complete) return 0;
     portsc_write(x, port, P_PRC | P_WRC | P_CSC | P_PEC | P_PLC);
     while (xhci_poll(x, &event)) defer(x, &event);
     if (!(xhci_portsc(x, port) & P_PED)) return 0;

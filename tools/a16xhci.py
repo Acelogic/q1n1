@@ -96,8 +96,12 @@ class XHCI:
         self.p = proxy
         self.base = base
         self.verbose = verbose
+        info = proxy.bootinfo()
+        if info.get('usb_ports'):
+            raise XHCIError('both controllers are managed by q1n1; raw takeover would corrupt live DMA')
+        if ((proxy.read32(base + 0xC110) >> 12) & 3) == 2 and proxy.read32(base + 0xC704) & (1 << 31):
+            raise XHCIError('refusing raw takeover of an active USB device controller')
         if dma is None:
-            info = proxy.bootinfo()
             # Top of the heap, 64 KiB aligned; the heap is host scratch only.
             dma = (info['heap_base'] + info['heap_size'] - dma_size) & ~0xFFFF
         self.dma = dma

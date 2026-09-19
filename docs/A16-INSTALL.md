@@ -110,47 +110,58 @@ python3 tools/a16ctl.py boot windows       # go back
 python3 tools/a16ctl.py status             # where is it now
 ```
 
-`a16ctl.py` needs SSH to the A16 only to arm the reboot from Windows. Once q1n1
-is running it is not involved.
+`a16ctl.py` needs SSH to the A16 only to arm the reboot from Windows. It finds
+the boot script in `C:\q1n1-bringup` or a unique `q1n1-bringup*` directory in
+the Windows user's profile; set `A16_REMOTE_DIR` if there is more than one.
+Once q1n1 is running, SSH is not involved.
 
-On boot the payload shows a boot window for 30 s on the USB CDC console
+On boot the payload shows a boot window for 25 s on the USB CDC console
 (`A16-Q1N1-BOOT`). `a16ctl.py claim q1n1` answers it without a reboot. With
-`--auto` and no USB host attached it picks the proxy itself on timeout, which is
-what makes a dock-free boot work.
+`--auto` it picks the proxy on timeout whether USB0 is already configured or
+not. Without a USB0 host it uses the direct USB discovery path. An explicit
+`windows` choice or a refused boot still returns to Windows.
 
 ## Connect
 
-Two independent transports, and they work at the same time:
-
-**USB0 CDC console** — appears as `/dev/cu.usbmodem*A16_Q1N1_EL2*`. Needs the
-dock, because that is what makes this machine a USB device.
+Both A16 USB-C controllers independently discover the USB data direction.
+Either can present a CDC serial device to a Mac host or enumerate the Mac as
+an NCM device and serve the proxy over IPv6 UDP. Both links can work at once.
+The reader discovers the two CDC identities and active Mac USB NCM interfaces,
+then handshakes candidates; no fixed Mac interface name is needed.
 
 ```sh
 python3 tools/q1n1proxy.py shell            # interactive
 python3 tools/q1n1proxy.py acpi             # one-shot commands
+python3 tools/q1n1proxy.py info             # selected endpoint and both port states
 ```
 
-**USB1 over a bare C-to-C cable** — q1n1 drives its own xHCI controller,
-enumerates the Mac as a CDC-NCM device, and speaks UDP over IPv6 to it. No dock
-and no root.
+CDC identities are `A16-Q1N1-EL2` on USB0 and `A16-Q1N1-EL2B` on USB1.
+To select a particular NCM connection explicitly, use the interface observed
+on this Mac; its number can change when the cable moves:
 
 ```sh
-python3 tools/udplink.py en5                # check the link; en5 is the NCM interface
+python3 tools/q1n1proxy.py --device udp://en5 info
 ```
 
 q1n1 answers on a fixed address, `fe80::4919`, port 4919. Do not derive the
 address from the local interface's MAC — that is not the MAC the NCM descriptor
 carries, and the two are not required to match.
 
-A bare cable cannot make the A16 a USB *device* (PD firmware policy), which is
-why this direction is the host driving the Mac rather than the reverse.
+Firmware does not expose the USB0 boot window over the bare cable. With the
+installed `--boot --auto` script, wait for that window's 25-second timeout and
+then for either EL2 USB link to appear. Physical tests verified all six
+direct-cable pairings across three Mac ports and both A16 ports, with
+disconnect recovery. The dock passed both A16 ports through the second Mac
+port; other dock pairings remain unverified. See the current
+[port qualification record](A16-USB-PORT-INDEPENDENCE.md), including the
+installed-image and cold-boot qualification status.
 
 ## The edit-test loop
 
 A chainload replaces the running EL2 code without rebooting:
 
 ```sh
-python3 tools/q1n1proxy.py chainload --xhci build/uefi/q1n1-stage.bin
+python3 tools/q1n1proxy.py chainload build/uefi/q1n1-stage.bin
 ```
 
 629 KB uploads, verifies and jumps in about 0.2 s over either transport. The new
@@ -158,6 +169,9 @@ stage inherits bootinfo, bumps `stage_generation` so you can prove the new code
 is the one answering, and adopts a running NCM link in place rather than
 resetting the controller — resetting is what makes the far end stop enumerating
 until the cable is physically replugged.
+
+Stages publish their USB state layout. The reader refuses an incompatible
+handoff while NCM is active; use a cold boot of the new EFI for such a change.
 
 `--xhci` asks the stage to bring up USB1 and open the NCM link itself.
 

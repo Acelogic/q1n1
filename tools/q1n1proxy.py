@@ -64,7 +64,7 @@ BOOTINFO_FIELDS = (
     'boot_current return_armed arm_status entry_status timer_hz '
     'gic_distributor gic_redistributor gic_stats '
     'stage_base stage_size stage_generation '
-    'xhci_base xhci_stats ncm_stats ncm_proxy_stats'
+    'xhci_base xhci_stats ncm_stats ncm_proxy_stats usb_ports usb_port_count'
 ).split()
 
 # platform/uefi/main.c struct q1n1_exception.
@@ -144,12 +144,17 @@ class Transport:
 
     def write(self, data):
         view = memoryview(data)
+        deadline = time.monotonic() + 5
         while view:
-            select.select([], [self.fd], [], 5)
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([], [self.fd], [], max(0, left))[1]:
+                raise ProxyTimeout('serial write timed out; transport may have disconnected')
             try:
                 sent = os.write(self.fd, view)
             except BlockingIOError:
                 continue
+            if sent <= 0:
+                raise ProxyError('serial transport closed during write')
             view = view[sent:]
 
     def read(self, count, timeout=5.0):
@@ -234,7 +239,6 @@ class Link:
             if kind == REQ_BOOT and status == ST_OK and kind != command:
                 self.handle_boot(data)
                 window = b''
-                deadline = time.monotonic() + timeout
                 continue
             if kind != command:
                 raise ProxyError(f'reply for {kind:#x}, expected {command:#x}')
@@ -361,10 +365,13 @@ class Proxy:
 
     def bootinfo(self):
         address = self.request(self.P_GET_BOOTARGS)
-        data = self.link.readmem(address, 8 * len(BOOTINFO_FIELDS))
-        values = dict(zip(BOOTINFO_FIELDS, struct.unpack(f'<{len(BOOTINFO_FIELDS)}Q', data)))
-        if values['magic'] != MAGIC:
-            raise ProxyError(f"bootinfo magic {values['magic']:#x}")
+        magic, version, size = struct.unpack('<3Q', self.link.readmem(address, 24))
+        if magic != MAGIC or version != 1 or size < 24 or size % 8 or size > 4096:
+            raise ProxyError(f'invalid bootinfo header: magic={magic:#x}, version={version}, size={size}')
+        count = min(size // 8, len(BOOTINFO_FIELDS))
+        data = self.link.readmem(address, 8 * count)
+        values = dict.fromkeys(BOOTINFO_FIELDS, 0)
+        values.update(zip(BOOTINFO_FIELDS, struct.unpack(f'<{count}Q', data)))
         values['address'] = address
         return values
 
@@ -489,6 +496,7 @@ class Proxy:
         bootinfo, re-takes the hardware and bumps stage_generation, so the
         caller can prove the new code is the one answering."""
         info = self.bootinfo()
+        self.check_stage_transport(data, info)
         base = base or self.stage_header(data)
         if not base:
             raise ProxyError('the payload reserved no stage region')
@@ -504,6 +512,25 @@ class Proxy:
         # that reply here or it desynchronises the next request.
         self.request(self.P_VECTOR, base, info['address'])
         return {'base': base, 'bytes': len(data), 'generation_before': info['stage_generation']}
+
+    def check_stage_transport(self, data, info):
+        """Refuse a layout change that would reset a configured Mac NCM link."""
+        if not info.get('usb_ports'):
+            return
+        count = info.get('usb_port_count', 0)
+        if not 1 <= count <= 2:
+            raise ProxyError('invalid USB port table size')
+        states = self.readmem(info['usb_ports'], count * 80, live=True)
+        if not any(struct.unpack_from('<Q', states, i * 80 + 8)[0] == 1 for i in range(count)):
+            return
+        if len(data) < 48 or struct.unpack_from('<Q', data, 32)[0] != 0x3154525055533151:
+            raise ProxyError('stage has no USB handoff contract; refusing to reset a live NCM link')
+        offset = struct.unpack_from('<Q', data, 40)[0] - self.stage_header(data)
+        if offset < 48 or offset + 24 > len(data):
+            raise ProxyError('stage USB handoff contract is outside the image')
+        current = self.readmem(info['usb_ports'] - 24, 24)
+        if data[offset:offset + 24] != current:
+            raise ProxyError('incompatible USB state layout; use a cold boot of the new EFI image')
 
     def write_chunk(self):
         """Largest write the transport wants in one go, 0 for no limit.
@@ -556,21 +583,53 @@ class Proxy:
         return tables
 
 
+def discover_endpoints(serial=PROXY_SERIAL, interface=PROXY_INTERFACE, network=True):
+    endpoints = list(find_ports(serial, interface))
+    if network and serial == PROXY_SERIAL and interface == PROXY_INTERFACE:
+        import udplink
+        endpoints += ['udp://' + name for name in udplink.find_interfaces()]
+    return endpoints
+
+
 def connect(device=None, serial=PROXY_SERIAL, interface=PROXY_INTERFACE, debug=False, wait=0.0):
-    """Open the proxy port, waiting for it to appear if asked."""
+    """Find and handshake a CDC or USB-NCM endpoint on any Mac/A16 port.
+
+    Failed discovery handshakes are safe to retry. Operations on an established
+    connection are never automatically replayed across a disconnect.
+    """
     deadline = time.monotonic() + wait
+    errors = {}
     while True:
-        path = device
-        if not path:
-            ports = find_ports(serial, interface)
-            path = ports[0] if ports else None
-        if path and Path(path).exists():
-            link = Link(path, debug=debug)
-            proxy = Proxy(link)
-            proxy.nop()
-            return proxy
+        candidates = [str(device)] if device else discover_endpoints(serial, interface)
+        for path in candidates:
+            link = transport = None
+            try:
+                if path.startswith('udp://'):
+                    import udplink
+                    name = path[6:]
+                    transport = udplink.UdpTransport(name, udplink.target_address(name))
+                elif not Path(path).exists():
+                    continue
+                link = Link(None if transport else path, debug=debug, timeout=1.0,
+                            transport=transport)
+                proxy = Proxy(link)
+                link.nop(0)  # Reset negotiation left by a previous client on this cable.
+                proxy.nop()
+                link.timeout = 5.0
+                proxy.endpoint = path
+                return proxy
+            except (OSError, RuntimeError, TimeoutError) as problem:
+                errors[path] = str(problem)
+                try:
+                    if link is not None:
+                        link.close()
+                    elif transport is not None:
+                        transport.close()
+                except OSError:
+                    pass
         if time.monotonic() >= deadline:
-            raise ProxyError(f'no q1n1 proxy port ({serial}, interface {interface})')
+            details = '; '.join(f'{path}: {error}' for path, error in errors.items())
+            raise ProxyError('no responding q1n1 CDC/NCM endpoint' + (f' ({details})' if details else ''))
         time.sleep(0.25)
 
 
@@ -583,7 +642,7 @@ def hexdump(data, base=0):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--device', help='tty or UNIX socket path (default: find A16-Q1N1-EL2)')
+    parser.add_argument('--device', help='tty, UNIX socket, or udp://enN (default: discover CDC and USB NCM)')
     parser.add_argument('--serial', default=PROXY_SERIAL)
     parser.add_argument('--interface', type=int, default=PROXY_INTERFACE)
     parser.add_argument('--wait', type=float, default=0.0, help='seconds to wait for the port')
@@ -611,7 +670,7 @@ def main():
     call.add_argument('args', nargs='*')
     chain = sub.add_parser('chainload', help='upload a flat stage and run it')
     chain.add_argument('--xhci', action='store_true',
-                       help='bring up USB1 as an xHCI host and open the NCM link')
+                       help='legacy stage flag; current payloads discover both ports automatically')
     chain.add_argument('file', type=Path)
     chain.add_argument('--base', type=lambda v: int(v, 0))
     chain.add_argument('--settle', type=float, default=6.0)
@@ -626,9 +685,18 @@ def main():
     number = lambda text: int(text, 0)
     proxy = connect(args.device, args.serial, args.interface, args.debug, args.wait)
     if args.command == 'info':
+        print(f'endpoint               {proxy.endpoint}')
         values = proxy.bootinfo()
         for name in ('address',) + tuple(BOOTINFO_FIELDS):
             print(f'{name:22} {values[name]:#x}')
+        if values['usb_ports'] and values['usb_port_count'] <= 2:
+            names = 'base role connected attempts disconnects last_error device_stats host_stats ncm_stats proxy_stats'.split()
+            roles = {0: 'searching', 1: 'host/NCM', 2: 'device/CDC', 3: 'unsupported'}
+            for i in range(values['usb_port_count']):
+                record = struct.unpack('<10Q', proxy.readmem(values['usb_ports'] + i * 80, 80, live=True))
+                port = dict(zip(names, record))
+                print(f"USB{i}: {roles.get(port['role'], 'unknown')} connected={port['connected']} "
+                      f"attempts={port['attempts']} disconnects={port['disconnects']} error={port['last_error']:#x}")
         stats = struct.unpack('<12Q', proxy.readmem(values['proxy_stats'], 96))
         names = ('requests proxy_calls memreads memwrites read_bytes write_bytes checksum_errors '
                  'timeouts bad_commands exceptions announcements last_opcode').split()
@@ -678,11 +746,12 @@ def main():
         time.sleep(args.settle)
         fresh = connect(args.device, args.serial, args.interface, args.debug, wait=60)
         info = fresh.bootinfo()
+        fresh.link.close()
+        if info['image_base'] != link or info['stage_generation'] <= report['generation_before']:
+            raise SystemExit(f'chainload did not take over: still generation {info["stage_generation"]} '
+                             f'at {info["image_base"]:#x}; inspect the target handoff status')
         print(f'stage answering: generation {info["stage_generation"]}, image {info["image_base"]:#x}, '
               f'EL{info["current_el"]}, heap {info["heap_base"]:#x}')
-        if info['image_base'] != link:
-            raise SystemExit(f'stage reports {info["image_base"]:#x} but was loaded at {link:#x}; '
-                             'the next chainload would overwrite the running slot')
     elif args.command == 'acpi':
         for signature, address in sorted(proxy.acpi_tables().items()):
             print(f'{signature}  {address:#x}')

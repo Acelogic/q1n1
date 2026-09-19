@@ -71,7 +71,9 @@ static uint64_t cache_line(int instruction)
     } while (0)
 #endif
 
-static int data_checksums_off;
+static int default_checksum_state;
+static int *checksum_state = &default_checksum_state;
+#define data_checksums_off (*checksum_state)
 static uint8_t bounce[BOUNCE_BYTES];
 
 static uint32_t get32(const uint8_t *p)
@@ -87,6 +89,7 @@ static int read_full(const struct q1n1_io *io, uint8_t *p, size_t n)
 {
     uint64_t hz = q1n1_platform_hz(), last = q1n1_platform_ticks();
     while (n) {
+        if (!io->ready(io->ctx)) return 0;
         size_t got = io->read(io->ctx, p, n);
         if (got) { p += got; n -= got; last = q1n1_platform_ticks(); continue; }
         if (q1n1_platform_ticks() - last > hz * IDLE_TIMEOUT_SECONDS) { q1n1_proxy_stats.timeouts++; return 0; }
@@ -98,6 +101,7 @@ static int write_full(const struct q1n1_io *io, const uint8_t *p, size_t n)
 {
     uint64_t hz = q1n1_platform_hz(), last = q1n1_platform_ticks();
     while (n) {
+        if (!io->ready(io->ctx)) return 0;
         size_t sent = io->write(io->ctx, p, n);
         if (sent) { p += sent; n -= sent; last = q1n1_platform_ticks(); continue; }
         if (q1n1_platform_ticks() - last > hz * IDLE_TIMEOUT_SECONDS) { q1n1_proxy_stats.timeouts++; return 0; }
@@ -277,10 +281,18 @@ uint64_t q1n1_proxy_run(const struct q1n1_io *io, uint32_t reason, uint32_t code
 {
     uint32_t window = 0;
     int was_ready = 0;
+    uint64_t last_byte = q1n1_platform_ticks();
+    int partial = 0;
     for (;;) {
         io->poll(io->ctx);
         if (io->abort && io->abort(io->ctx)) return 0;
         int ready = io->ready(io->ctx);
+        if (!ready || (partial && q1n1_platform_ticks() - last_byte >
+                        q1n1_platform_hz() * IDLE_TIMEOUT_SECONDS)) {
+            window = 0;
+            partial = 0;
+            if (io->end) io->end(io->ctx);
+        }
         if (ready && !was_ready) {
             uint8_t start[24] = {0};
             put32(start, reason);
@@ -292,18 +304,26 @@ uint64_t q1n1_proxy_run(const struct q1n1_io *io, uint32_t reason, uint32_t code
         was_ready = ready;
         uint8_t byte;
         if (io->read(io->ctx, &byte, 1) != 1) continue;
+        last_byte = q1n1_platform_ticks();
+        partial = 1;
         window = window >> 8 | (uint32_t)byte << 24;
         if ((window & 0xffffff) != 0xAA55FF) continue;
 
         uint8_t request[REQ_SIZE], data[24] = {0};
         put32(request, window);
         window = 0;
-        if (!read_full(io, request + 4, REQ_SIZE - 4)) continue;
+        partial = 0;
+        checksum_state = io->checksum_state ? io->checksum_state(io->ctx) : &default_checksum_state;
+        if (!read_full(io, request + 4, REQ_SIZE - 4)) {
+            if (io->end) io->end(io->ctx);
+            continue;
+        }
         q1n1_proxy_stats.requests++;
         uint32_t type = get32(request);
         if (checksum(request, REQ_SIZE - 4) != get32(request + REQ_SIZE - 4)) {
             q1n1_proxy_stats.checksum_errors++;
             send_reply(io, type, ST_CSUMERR, data);
+            if (io->end) io->end(io->ctx);
             continue;
         }
         switch (type) {
@@ -318,7 +338,10 @@ uint64_t q1n1_proxy_run(const struct q1n1_io *io, uint32_t reason, uint32_t code
             uint64_t exit_value = 0;
             int stop = proxy_request(io, request + 4, data, &exit_value);
             send_reply(io, type, ST_OK, data);
-            if (stop) return exit_value;
+            if (stop) {
+                if (io->end) io->end(io->ctx);
+                return exit_value;
+            }
             break;
         }
         case REQ_MEMREAD:
@@ -332,5 +355,6 @@ uint64_t q1n1_proxy_run(const struct q1n1_io *io, uint32_t reason, uint32_t code
             send_reply(io, type, ST_BADCMD, data);
             break;
         }
+        if (io->end) io->end(io->ctx);
     }
 }

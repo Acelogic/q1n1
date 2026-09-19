@@ -13,6 +13,8 @@ _start:
 .globl q1n1_stage_config
 q1n1_stage_config:
     .quad 0                         /* patched in the image by the host */
+    .quad 0x3154525055533151         /* "Q1SUPRT1": USB handoff contract */
+    .quad q1n1_usb_ports_contract
 .Lstage_start:
     msr daifset, #15
     mov x19, x0

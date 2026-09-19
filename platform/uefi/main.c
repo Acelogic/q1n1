@@ -16,7 +16,7 @@
 #include "xhci.h"
 #include "ncm.h"
 #include "ncm-proxy.h"
-#include "usb1-device.h"
+#include "usb-ports.h"
 #include "q1n1-bootinfo.h"
 #include "boot-window.h"
 #include "q1n1-proxy.h"
@@ -54,48 +54,20 @@ struct q1n1_exception {
 static int mode;
 static struct efi_runtime_services *rt;
 static uint64_t hz, proxy_start;
-static struct qdwc3 usb;
 static struct qdwc3_saved saved;
+#ifndef Q1N1_STAGE
 static struct q1n1_boot_result boot;
+#endif
 static struct q1n1_bootinfo info;
 static struct q1n1_exception exception;
 static const struct q1n1_io *proxy_io;
 static uint8_t *dma_arena;
 static struct q1n1_gic gic;
 /* The tick can interrupt the polled loop, so the driver has one owner at a time. */
-static volatile int in_usb;
-static volatile int in_ncm;
 static int in_exception, resetting;
 static uint32_t status_row = 16;
-/* Kept in the shared arena rather than .bss, so a chainloaded stage can adopt a
- * link its predecessor brought up instead of resetting the controller -- which
- * is what leaves the far end refusing to enumerate until it is replugged. */
-#define USB_STATE_MAGIC UINT64_C(0x3145544154534255)   /* "UBSTATE1" */
-struct q1n1_usb_state {
-    /* `size` is the guard that matters. A stage adopts these structures in
-     * place, so any change to their layout -- a bigger deferred-event cache was
-     * enough -- makes the old block unreadable. Comparing sizeof catches that
-     * automatically, where a hand-maintained version number does not: this was
-     * found by forgetting to bump one. */
-    uint64_t magic, version, size;
-    struct xhci xhci;
-    struct ncm ncm;
-    struct ncm_proxy proxy;
-};
-static struct q1n1_usb_state *usb_state;
-static uint8_t *xhci_arena_base;
-static int no_cdc;                  /* booted with no USB0 host: NCM link only */
-static int ncm_link_up(void);
-#define xhci_host (usb_state->xhci)
-#define ncm_link (usb_state->ncm)
-#define ncm_proxy_link (usb_state->proxy)
-/* The multiplexer's second transport, published once the NCM link is up. */
-static const struct q1n1_io *dual_second;
-static struct usb1_device direct_device;
-static uint64_t host_idle_since, direct_deadline, direct_activity, direct_down_since;
-static int direct_try(void);
-static void direct_stop(void);
-static void direct_maintain(void);
+static struct q1n1_usb_ports *usb_ports;
+static int no_cdc;
 
 static uint64_t stage_config;       /* logo choice etc., patched into a stage image */
 extern const uint8_t q1n1_asahi_logo[];
@@ -106,152 +78,15 @@ extern const uint8_t q1n1_asahi_logo[];
 #define LOGO_CORNER 1
 #define LOGO_NONE 2
 #define LOGO_ASAHI 3
-/* Bit 2 of the stage config word: bring up USB1 as an xHCI host and open the
- * NCM link over it. Opt-in, so an ordinary stage behaves exactly as before. */
-#define STAGE_XHCI 4
-/* USB1. Firmware leaves this controller in host mode and halted with nothing
- * bound to it, which is why q1n1 can take it. USB0 carries the console and
- * must never be touched here. */
-#define XHCI_USB1_BASE 0x0a800000
-#define XHCI_USB0_BASE 0x0a600000
-
-/* Which controller carries the cable to the other machine.
- *
- * GCTL describes the controller configuration, not the negotiated Type-C data
- * role. BIOS312 can leave USB1 as a host while the Mac is also a host. Try NCM
- * first; an idle USB1 can subsequently offer CDC device mode. Never borrow the
- * controller carrying the existing console. */
-static int ncm_link_up(void)
-{
-    return usb_state && ncm_link.x && ncm_link.stats.init_step == 9;
-}
-
-static uintptr_t xhci_candidate(void)
-{
-    static const uintptr_t bases[2] = {XHCI_USB1_BASE, XHCI_USB0_BASE};
-    for (unsigned n = 0; n < 2; n++) {
-        /* Never take the controller the CDC console is running on. */
-        if (!no_cdc && mode == MODE_USB_PROXY && bases[n] == USB_EBS_DWC3_BASE) continue;
-        if (((xhci_rd32(bases[n] + 0xc110) >> 12) & 3) == 1) return bases[n];   /* GCTL host */
-    }
-    return 0;
-}
-#define XHCI_ARENA 0x40000
-/* Serve the proxy over the NCM link for a while, then come back here.
- *
- * Called with P_CALL over USB0, which stays the lifeline: this blocks the
- * console loop while it runs, so the transport's watchdog returns control once
- * the Ethernet side has been quiet for `seconds`. Returns the frames seen. */
+/* Refresh only idle ports; preserve the transport carrying this request. */
+uint64_t q1n1_xhci_retry(void) { return q1n1_usb_ports_refresh(usb_ports); }
 uint64_t q1n1_ncm_proxy_run(uint64_t seconds)
 {
-    if (!ncm_link.x) return ~0ull;
-    ncm_proxy_init(&ncm_proxy_link, &ncm_link, (seconds ? seconds : 20) * 1000000ull);
-    /* Seed the host's neighbour cache so its first datagram does not have to
-     * wait for a solicitation round trip. */
-    ncm_proxy_announce(&ncm_proxy_link);
-    q1n1_proxy_run(&ncm_proxy_link.io, Q1N1_START_BOOT, 0, (uintptr_t)&info);
-    return ncm_proxy_link.stats.frames_in;
-}
-
-/* Callable over the proxy with P_CALL, so a bring-up can be retried after the
- * far end is replugged without chainloading a whole stage. Returns 0, or the
- * negated status of whichever step failed. */
-/* Everything the drivers own lives in the arena; the rings and buffers start
- * after it. */
-static uint8_t *usb_dma_base(void)
-{
-    return xhci_arena_base + ((sizeof(struct q1n1_usb_state) + 0xfff) & ~0xfffu);
-}
-static uint64_t usb_dma_size(void)
-{
-    return XHCI_ARENA - (uint64_t)(usb_dma_base() - xhci_arena_base);
-}
-
-/* Can this stage take over a link that is already up, untouched? */
-static int usb_state_adoptable(void)
-{
-    if (!usb_state || usb_state->magic != USB_STATE_MAGIC || usb_state->version != 1) return 0;
-    if (usb_state->size != sizeof(*usb_state)) return 0;   /* built with a different layout */
-    if (!xhci_host.base || xhci_host.stats.init_step != 4) return 0;
-    if (!xhci_running(&xhci_host)) return 0;
-    if (ncm_link.stats.init_step != 9 || !ncm_link.device.slot) return 0;
-    /* PORTSC bit 1 is Port Enabled: the device is still there and addressed. */
-    if (!(xhci_portsc(&xhci_host, ncm_link.device.port) & (1u << 1))) return 0;
-    return 1;
-}
-
-/* Bring the NCM link up whenever a device turns up on USB1.
- *
- * Requiring the cable at boot was wrong: the far end needs a moment to
- * re-present after this machine power-cycles the port, and a cable plugged in
- * later should work just as well. The controller stays running either way, so
- * this only costs one MMIO read every quarter second while nothing is there. */
-static void usb_hotplug(void)
-{
-    static uint64_t next_check_us;
-    /* Only the A16's USB path has these controllers. Probing their registers
-     * under --uart-proxy faults, which is how QEMU caught this -- twice. */
-    if (mode != MODE_USB_PROXY) return;
-    if (!usb_state || !xhci_arena_base) return;
-    uint64_t now = xhci_now_us();
-    if (now < next_check_us) return;
-    next_check_us = now + 250000;
-
-    uintptr_t base = xhci_candidate();
-    if (!base) return;
-    if (xhci_host.base != base || xhci_host.stats.init_step != 4) {
-        /* A cable appeared on a connector this payload has not taken yet. */
-        usb_state->magic = 0;
-        if (xhci_init(&xhci_host, base, usb_dma_base(), usb_dma_size())) return;
-        info.xhci_base = base;
-    }
-
-    uint32_t found = 0;
-    for (uint32_t port = 1; port <= xhci_host.max_ports && !found; port++)
-        if (xhci_portsc(&xhci_host, port) & 1u) found = port;   /* PORTSC.CCS */
-    if (!found) {
-        if (!host_idle_since) host_idle_since = now;
-        if (now - host_idle_since >= 1000000) direct_try();
-        return;
-    }
-    host_idle_since = 0;
-
-    if (ncm_open(&ncm_link, &xhci_host, 0, 2000)) {
-        /* A failed attempt may own slots, rings or an outstanding transfer.
-         * Reset the controller before reusing its arena on the next attempt. */
-        xhci_host.stats.init_step = 0;
-        return;
-    }
-    ncm_proxy_init(&ncm_proxy_link, &ncm_link, 0);
-    ncm_proxy_announce(&ncm_proxy_link);
-    dual_second = &ncm_proxy_link.io;
-    usb_state->magic = USB_STATE_MAGIC;
-    usb_state->version = 1;
-    usb_state->size = sizeof(*usb_state);
-}
-
-uint64_t q1n1_xhci_retry(void)
-{
-    int status;
-    if (!xhci_arena_base) return 1;
-    direct_stop();
-    ncm_link.x = NULL;
-    usb_state->magic = 0;
-    uintptr_t base = xhci_candidate();
-    if (!base) return 2;
-    status = xhci_init(&xhci_host, base, usb_dma_base(), usb_dma_size());
-    if (status) return (uint64_t)(-(int64_t)status);
-    status = ncm_open(&ncm_link, &xhci_host, 0, 15000);
-    if (status) return (uint64_t)(100 - (int64_t)status);
-    /* A retry rebuilds the link from scratch, so the transport that wraps it
-     * has to be rebuilt too and re-published to the multiplexer. */
-    ncm_proxy_init(&ncm_proxy_link, &ncm_link, 0);
-    ncm_proxy_announce(&ncm_proxy_link);
-    dual_second = &ncm_proxy_link.io;
-    usb_state->magic = USB_STATE_MAGIC;
-    usb_state->version = 1;
-    usb_state->size = sizeof(*usb_state);
-    return 0;
+    (void)seconds;
+    if (!usb_ports) return ~0ull;
+    uint64_t frames = 0;
+    for (unsigned i = 0; i < Q1N1_USB_PORTS; i++) frames += usb_ports->port[i].proxy.stats.frames_in;
+    return frames; /* Both links are already served continuously. */
 }
 
 void *memcpy(void *dest, const void *src, size_t n)
@@ -566,8 +401,7 @@ static void reset_now(void)
         resetting = 1;
         q1n1_gic_stop(&gic);
         /* Present a clean USB disconnect so the Mac notices the reboot at once. */
-        if (mode == MODE_USB_PROXY && usb.stats.init_step >= 2) qdwc3_stop(&usb);
-        direct_stop();
+        q1n1_usb_ports_stop(usb_ports);
     }
     if (rt && rt->reset_system) rt->reset_system(0, 0, 0, NULL);
     __asm__ volatile("mov x0, #0x0009\n movk x0, #0x8400, lsl #16\n smc #0" ::: "x0", "x1", "x2", "x3", "memory");
@@ -619,34 +453,24 @@ static void status_panel(void)
     con_puts("gic: "); con_dec(gic.ticks); con_puts(" ticks at "); con_dec(gic.rate);
     con_puts(" Hz, serviced "); con_dec(gic.serviced); con_puts(", skipped "); con_dec(gic.skipped);
     con_puts(", spurious "); con_dec(gic.spurious);
-    if (mode != MODE_USB_PROXY) return;
-    if (direct_device.active) {
-        const struct qdwc3_stats *s = &direct_device.usb.stats;
-        con_puts("\nusb1 direct CDC: cfg "); con_dec(s->configured);
-        con_puts(", setups "); con_dec(s->setups);
-        con_puts(", rx "); con_dec(s->rx_bytes); con_puts(", tx "); con_dec(s->tx_bytes);
+    if (mode != MODE_USB_PROXY || !usb_ports) return;
+    for (unsigned i = 0; i < Q1N1_USB_PORTS; i++) {
+        const struct q1n1_usb_port_status *st = &usb_ports->status[i];
+        const struct q1n1_usb_port *port = &usb_ports->port[i];
+        con_puts("\nusb"); con_dec(i); con_puts(": ");
+        if (st->role == Q1N1_USB_HOST) {
+            con_puts("host NCM "); con_puts(st->connected ? "up" : "discovering");
+            con_puts(", frames "); con_dec(port->ncm.stats.frames_in);
+            con_puts("/"); con_dec(port->ncm.stats.frames_out);
+        } else if (st->role == Q1N1_USB_DEVICE) {
+            con_puts("CDC cfg "); con_dec(port->device.stats.configured);
+            con_puts(", setups "); con_dec(port->device.stats.setups);
+            con_puts(", rx "); con_dec(port->device.stats.rx_bytes);
+            con_puts(", tx "); con_dec(port->device.stats.tx_bytes);
+        } else con_puts(st->role == Q1N1_USB_UNSUPPORTED ? "unavailable" : "retrying");
+        con_puts(", attempts "); con_dec(st->attempts);
+        con_puts(", disconnects "); con_dec(st->disconnects);
     }
-    if (ncm_link_up()) {
-        con_puts("\n");
-        con_puts("ncm: blocks "); con_dec(ncm_link.stats.blocks_in);
-        con_puts("/"); con_dec(ncm_link.stats.blocks_out);
-        con_puts(" frames "); con_dec(ncm_link.stats.frames_in);
-        con_puts("/"); con_dec(ncm_link.stats.frames_out);
-        con_puts(", udp in "); con_dec(ncm_proxy_link.stats.frames_in);
-        con_puts(" out "); con_dec(ncm_proxy_link.stats.frames_out);
-    }
-    /* Zero everywhere when no host ever brought the gadget up, which is the
-     * normal dock-free case rather than a fault. */
-    if (usb.stats.init_step < 2) return;
-    con_puts("\n");
-    const struct qdwc3_stats *s = &usb.stats;
-    con_puts("usb: port0 "); con_dec((uint64_t)qdwc3_ready(&usb, 0));
-    con_puts(" port1 "); con_dec((uint64_t)qdwc3_ready(&usb, 1));
-    con_puts(", speed "); con_dec(s->speed); con_puts(", cfg "); con_dec(s->configured);
-    con_puts(", resets "); con_dec(s->resets); con_puts(", connects "); con_dec(s->connects); con_puts("\n");
-    con_puts("usb: rx "); con_dec(s->rx_bytes); con_puts(" B, tx "); con_dec(s->tx_bytes);
-    con_puts(" B, dropped "); con_dec(s->dropped_rx); con_puts(", dma mismatch "); con_dec(s->dma_mismatch);
-    con_puts(", overflow "); con_dec(s->overflow); con_puts(", cmd fail "); con_dec(s->command_failures);
 }
 static void status_tick(void)
 {
@@ -654,215 +478,11 @@ static void status_tick(void)
     if (now - last_status >= hz) { last_status = now; status_panel(); }
 }
 
-static const char console_banner[] = "q1n1 EL2 console. The m1n1-protocol proxy is on the other A16-Q1N1-EL2 port.\r\n";
-static int console_was_ready;
-static int usb_started(void) { return usb.stats.init_step >= 2; }
-static size_t usb_read(void *ctx, uint8_t *b, size_t n)
+static void managed_usb_poll(void *ctx)
 {
-    in_usb = 1;
-    size_t got = qdwc3_read(&usb, (unsigned)(uintptr_t)ctx, b, n);
-    in_usb = 0;
-    return got;
-}
-static size_t usb_write(void *ctx, const uint8_t *b, size_t n)
-{
-    in_usb = 1;
-    size_t sent = qdwc3_write(&usb, (unsigned)(uintptr_t)ctx, b, n);
-    in_usb = 0;
-    return sent;
-}
-static int usb_ready(void *ctx)
-{
-    return usb_started() && qdwc3_ready(&usb, (unsigned)(uintptr_t)ctx);
-}
-static void usb_poll(void *ctx)
-{
-    (void)ctx;
-    /* Nothing to service when no host ever brought the gadget up. Guarding here
-     * rather than at each call site: the callers kept multiplying and every one
-     * that forgot was a crash. */
-    if (usb.stats.init_step < 2) return;
-    in_usb = 1;
-    qdwc3_poll(&usb);
-    in_usb = 0;
-    int ready = qdwc3_ready(&usb, 1);
-    if (ready && !console_was_ready) qdwc3_write(&usb, 1, (const uint8_t *)console_banner, sizeof(console_banner) - 1);
-    console_was_ready = ready;
-    uint8_t discard[64];
-    in_usb = 1;
-    qdwc3_read(&usb, 1, discard, sizeof(discard));
-    in_usb = 0;
+    q1n1_usb_ports_poll(ctx);
     status_tick();
 }
-static const struct q1n1_io usb_io = {.read = usb_read, .write = usb_write,
-                                      .poll = usb_poll, .ready = usb_ready};
-
-/* The direct cable can negotiate either data direction. Its CDC alternative
- * uses a separate controller, arena, identity and EP0 state from the dock. */
-static size_t direct_read(void *ctx, uint8_t *b, size_t n)
-{ (void)ctx; return qdwc3_read(&direct_device.usb, 0, b, n); }
-static size_t direct_write(void *ctx, const uint8_t *b, size_t n)
-{ (void)ctx; return qdwc3_write(&direct_device.usb, 0, b, n); }
-static int direct_ready(void *ctx)
-{ (void)ctx; return direct_device.active && qdwc3_ready(&direct_device.usb, 0); }
-static void direct_poll(void *ctx)
-{
-    (void)ctx;
-    qdwc3_poll(&direct_device.usb);
-    uint8_t discard[64];
-    qdwc3_read(&direct_device.usb, 1, discard, sizeof(discard));
-}
-static const struct q1n1_io direct_io = {.read = direct_read, .write = direct_write,
-                                          .poll = direct_poll, .ready = direct_ready};
-static void direct_stop(void)
-{
-    if (!direct_device.active) return;
-    int held = in_ncm;
-    in_ncm = 1;
-    usb1_device_stop(&direct_device);
-    if (dual_second == &direct_io) dual_second = NULL;
-    xhci_host.stats.init_step = 0; /* The controller must receive fresh rings. */
-    ncm_link.x = NULL;
-    usb_state->magic = 0;
-    host_idle_since = 0;
-    direct_down_since = 0;
-    if (!held) in_ncm = 0;
-}
-static int direct_try(void)
-{
-    if (direct_device.active || dual_second || !usb_state || ncm_link_up()) return -1;
-    if (xhci_host.base != XHCI_USB1_BASE || xhci_host.stats.init_step != 4) return -1;
-    /* Separate from the shared xHCI arena and the primary CDC DMA allocation. */
-    uint8_t *arena = xhci_arena_base - QDWC3_ARENA_SIZE;
-    if ((uintptr_t)arena < info.heap_base) return -1;
-    int status = usb1_device_start(&direct_device, xhci_host.base, arena, QDWC3_ARENA_SIZE);
-    usb_state->magic = 0;
-    ncm_link.x = NULL;
-    if (status) {
-        xhci_host.stats.init_step = 0;
-        host_idle_since = 0;
-        return status;
-    }
-    direct_activity = 0;
-    direct_down_since = 0;
-    direct_deadline = xhci_now_us() + 3000000;
-    info.xhci_base = 0; /* USB1 is now a device, not an active xHCI host. */
-    dual_second = &direct_io;
-    return 0;
-}
-static void direct_maintain(void)
-{
-    if (!direct_device.active) return;
-    uint64_t now = xhci_now_us();
-    const struct qdwc3_stats *s = &direct_device.usb.stats;
-    /* Release the controller when the cable physically goes away.
-     *
-     * `configured` cannot detect that: device mode forces session-valid, so an
-     * unplug raises no disconnect event and the flag stays set, refreshing the
-     * deadline below forever. That latched the machine in device mode serving a
-     * cable that was not there -- no re-probe, either arm, until a power cycle.
-     * The link state machine still follows the bus. Debounced because
-     * enumeration passes through Disconnected briefly. */
-    if (qdwc3_link_down(&direct_device.usb)) {
-        if (!direct_down_since) direct_down_since = now;
-        if (now - direct_down_since >= 500000) {
-            direct_stop();
-            return;
-        }
-    } else {
-        direct_down_since = 0;
-    }
-    uint64_t activity = s->setups + s->resets;
-    if (s->configured || activity != direct_activity) {
-        direct_deadline = now + 8000000;
-        direct_activity = activity;
-    } else if (now >= direct_deadline) {
-        /* No host answered. Return to host discovery for a Mac in device mode.
-         * Never cycle a configured link, including one whose tty is closed. */
-        direct_stop();
-    }
-}
-
-/* Both links, served at once.
- *
- * The console and the NCM link are alternatives, not a sequence: the proxy loop
- * takes one transport, so serving them in turn would stall whichever host was
- * not holding it. Multiplexing instead polls both every pass and answers on
- * whichever one a request arrived from, so the dock is optional without ever
- * being disconnected, and a wedged NCM link costs nothing.
- *
- * A request is read whole before the reply goes out, so `active` cannot change
- * mid-request. Two hosts talking at once would interleave; one host is the
- * expected case and the other link simply sits idle. */
-static const struct q1n1_io *dual_first;
-static int dual_active;
-
-/* Stands in for the console when no USB0 host exists: never ready, never any
- * bytes, so the multiplexer needs no special case for a dock-free boot. */
-static size_t null_read(void *ctx, uint8_t *b, size_t n) { (void)ctx; (void)b; (void)n; return 0; }
-static size_t null_write(void *ctx, const uint8_t *b, size_t n) { (void)ctx; (void)b; return n; }
-static void null_poll(void *ctx) { (void)ctx; }
-static int null_ready(void *ctx) { (void)ctx; return 0; }
-static const struct q1n1_io null_io = {.read = null_read, .write = null_write,
-                                       .poll = null_poll, .ready = null_ready};
-
-static void usb_hotplug(void);
-static void status_tick(void);
-
-static void dual_poll(void *ctx)
-{
-    (void)ctx;
-    dual_first->poll(dual_first->ctx);
-    if (dual_second) {
-        /* The tick polls this link too, so the loop has to hold the same guard
-         * the gadget's poll holds -- otherwise a tick lands in the middle of a
-         * transfer and corrupts the endpoint state. */
-        if (!in_ncm) {
-            in_ncm = 1;
-            dual_second->poll(dual_second->ctx);
-            in_ncm = 0;
-        }
-    } else {
-        usb_hotplug();
-    }
-    direct_maintain();
-    /* With no dock the gadget's poll never runs, so nothing else would keep the
-     * on-screen panel moving -- and that screen is the only diagnostic there. */
-    if (no_cdc) status_tick();
-}
-static size_t dual_read(void *ctx, uint8_t *buffer, size_t count)
-{
-    (void)ctx;
-    const struct q1n1_io *current = dual_active && dual_second ? dual_second : dual_first;
-    const struct q1n1_io *other = dual_active && dual_second ? dual_first : dual_second;
-    int held = in_ncm;
-    in_ncm = 1;
-    size_t got = current->read(current->ctx, buffer, count);
-    if (!got && other) {
-        got = other->read(other->ctx, buffer, count);
-        if (got) dual_active ^= 1;      /* answer wherever the request came from */
-    }
-    if (!held) in_ncm = 0;
-    return got;
-}
-static size_t dual_write(void *ctx, const uint8_t *buffer, size_t count)
-{
-    (void)ctx;
-    const struct q1n1_io *current = dual_active && dual_second ? dual_second : dual_first;
-    int held = in_ncm;
-    in_ncm = 1;
-    size_t sent = current->write(current->ctx, buffer, count);
-    if (!held) in_ncm = 0;
-    return sent;
-}
-static int dual_ready(void *ctx)
-{
-    (void)ctx;
-    return dual_first->ready(dual_first->ctx) ||
-           (dual_second && dual_second->ready(dual_second->ctx));
-}
-static const struct q1n1_io dual_io = {.read = dual_read, .write = dual_write,
-                                       .poll = dual_poll, .ready = dual_ready};
 
 static size_t pl011_read(void *ctx, uint8_t *b, size_t n)
 {
@@ -927,28 +547,7 @@ void q1n1_exception(uint64_t *frame, uint64_t vector)
     if (resetting) reset_now();
     if ((vector & 3) == 1) { /* IRQ: the EL2 timer tick keeps the link alive */
         uint32_t intid = q1n1_gic_handle(&gic);
-        /* The gadget is only there when a host brought it up: a dock-free boot
-         * deliberately never takes it over, and polling it then dereferences a
-         * base that was never set. Guard on the driver, not on the mode. */
-        if (intid == gic.intid && mode == MODE_USB_PROXY && usb.stats.init_step >= 2) {
-            if (in_usb) {
-                gic.skipped++; /* the polled loop already owns the driver */
-            } else {
-                in_usb = 1;
-                qdwc3_poll(&usb);
-                in_usb = 0;
-                gic.serviced++;
-            }
-        }
-        /* The NCM link needs the same servicing the gadget gets, and it is the
-         * only link at all on a dock-free boot: without this it stalls whenever
-         * the proxy loop is busy. It rides a different controller, so it takes
-         * its own re-entrancy guard rather than sharing in_usb. */
-        if (intid == gic.intid && dual_second && !in_ncm) {
-            in_ncm = 1;
-            dual_second->poll(dual_second->ctx);
-            in_ncm = 0;
-        }
+        if (intid == gic.intid) q1n1_usb_ports_tick(usb_ports);
         return;
     }
     uint64_t guard = q1n1_exc_guard & Q1N1_GUARD_TYPE_MASK;
@@ -1066,26 +665,27 @@ static void proxy_main(void)
     con_puts(", stage "); con_dec(info.stage_size >> 20); con_puts(" MiB @ "); con_hexn(info.stage_base, 8);
     con_puts("\n");
 
-    if (mode == MODE_USB_PROXY && no_cdc) {
-        con_puts("usb: no USB0 host at boot; device-mode controller untouched\n");
-    } else if (mode == MODE_USB_PROXY) {
-        con_puts("usb: dwc3 @ "); con_hexn(info.usb_dwc3, 8);
-        con_puts(" qscratch @ "); con_hexn(info.usb_qscratch, 8);
-        con_puts(" id "); con_hexn(saved.gsnpsid, 8); con_puts("\n");
-        int result = qdwc3_takeover(&usb, USB_EBS_DWC3_BASE, USB_EBS_QSCRATCH_BASE, &saved, dma_arena,
-                                    QDWC3_ARENA_SIZE);
-        if (result) {
-            con_puts("usb: takeover failed, status "); con_dec((uint64_t)(-(int64_t)result));
-            con_puts(" at init step "); con_dec(usb.stats.init_step); con_puts("\n");
-            con_puts("q1n1: resetting in 20 s\n");
-            wait_seconds(20);
-            reset_now();
+    if (mode == MODE_USB_PROXY) {
+        if (info.heap_size < Q1N1_USB_ARENA_SIZE + 0x10000) {
+            con_puts("USB: insufficient DMA scratch; halted\n");
+            for (;;) __asm__ volatile("wfe");
         }
-        con_puts("usb: cdc acm 1209:316d A16-Q1N1-EL2, port 0 proxy, port 1 console\n");
-        con_puts("boot: bootcurrent "); con_hexn(boot.boot_current, 4);
-        con_puts(info.return_armed ? ", reset returns to the q1n1 boot window\n"
-                                   : ", reset goes to Windows (bootnext not armed)\n");
-        proxy_io = &usb_io;
+        uint8_t *arena = (void *)(uintptr_t)((info.heap_base + info.heap_size - Q1N1_USB_ARENA_SIZE) & ~0xffffull);
+        usb_ports = q1n1_usb_ports_init(arena, Q1N1_USB_ARENA_SIZE, info.stage_generation != 0);
+        if (!usb_ports) {
+            con_puts("USB: invalid arena; halted\n");
+            for (;;) __asm__ volatile("wfe");
+        }
+        usb_ports->io.poll = managed_usb_poll;
+        proxy_io = &usb_ports->io;
+        info.usb_ports = (uintptr_t)usb_ports->status;
+        info.usb_port_count = Q1N1_USB_PORTS;
+        info.usb_stats = (uintptr_t)&usb_ports->port[0].device.stats;
+        info.xhci_base = 0;
+        info.xhci_stats = (uintptr_t)&usb_ports->port[0].host.stats;
+        info.ncm_stats = (uintptr_t)&usb_ports->port[0].ncm.stats;
+        info.ncm_proxy_stats = (uintptr_t)&usb_ports->port[0].proxy.stats;
+        con_puts("usb: independent host/CDC discovery on both controllers\n");
     } else {
         con_puts("uart: pl011 @ "); con_hexn(uart.base, 8); con_puts("\n");
         proxy_io = &pl011_io;
@@ -1105,86 +705,6 @@ static void proxy_main(void)
         con_puts(" at "); con_dec(gic.rate); con_puts(" Hz\n");
         q1n1_gic_start(&gic);
     }
-    xhci_arena_base = (uint8_t *)(uintptr_t)((info.heap_base + info.heap_size - XHCI_ARENA)
-                                             & ~0xffffULL);
-    /* Set explicitly rather than inherited: a stage chainloaded from a payload
-     * built before these fields existed copies a shorter struct, so whatever
-     * followed it in memory would be reported as a pointer. */
-    info.xhci_base = 0;
-    /* Published even when the bring-up was not requested, so a retry driven
-     * over the proxy afterwards can still be read back. */
-    usb_state = (struct q1n1_usb_state *)xhci_arena_base;
-    info.xhci_stats = (uintptr_t)&xhci_host.stats;
-    info.ncm_stats = (uintptr_t)&ncm_link.stats;
-    info.ncm_proxy_stats = (uintptr_t)&ncm_proxy_link.stats;
-
-    if (usb_state_adoptable()) {
-        /* A previous stage left this link up. Taking it over untouched is the
-         * whole point: resetting the controller is what makes the far end stop
-         * enumerating until someone replugs the cable. Only the transport's
-         * function pointers need renewing -- they refer to code that is about
-         * to be overwritten. */
-        info.xhci_base = XHCI_USB1_BASE;
-        ncm_proxy_rebind(&ncm_proxy_link, &ncm_link);
-        dual_second = &ncm_proxy_link.io;
-        con_puts("ncm: adopted the running link, "); con_hexn(ncm_link.vendor, 4);
-        con_puts(":"); con_hexn(ncm_link.product, 4);
-        con_puts(", blocks in "); con_dec(ncm_link.stats.blocks_in);
-        con_puts(" (controller untouched)\n");
-    } else if ((stage_config & STAGE_XHCI) ||
-               (!info.stage_generation && mode == MODE_USB_PROXY)) {
-        /* Only the A16's own USB path probes USB1 automatically. Under
-         * --uart-proxy there is no controller at that address and the
-         * read faults, which is how QEMU caught this. */
-        /* The arena has to be identity-mapped DMA the firmware is not using:
-         * the top of the proxy heap, which no target code touches. */
-        uint8_t *arena = usb_dma_base();
-        uintptr_t base = xhci_candidate();
-        info.xhci_base = base;
-        con_puts("xhci: host-mode controller @ "); con_hexn(base, 8);
-        con_puts(", arena @ "); con_hexn((uintptr_t)arena, 8);
-        usb_state->magic = 0;
-        int status = base ? xhci_init(&xhci_host, base, arena, usb_dma_size()) : -1;
-        if (status) {
-            con_puts(" - init failed, status "); con_dec((uint64_t)(-(int64_t)status));
-            con_puts("\n");
-        } else {
-            con_puts(", "); con_dec(xhci_host.max_slots); con_puts(" slots, ");
-            con_dec(xhci_host.max_ports); con_puts(" ports\n");
-            /* Short: when nothing is attached this is dead time on every boot,
-             * and an attached device shows up on the port immediately. */
-            status = ncm_open(&ncm_link, &xhci_host, 0, 3000);
-            if (status) {
-                con_puts("ncm: no link, status "); con_dec((uint64_t)(-(int64_t)status));
-                con_puts(" at step "); con_dec(ncm_link.stats.init_step); con_puts("\n");
-            } else {
-                con_puts("ncm: "); con_hexn(ncm_link.vendor, 4); con_puts(":");
-                con_hexn(ncm_link.product, 4);
-                con_puts(" mac ");
-                for (unsigned k = 0; k < 6; k++) {
-                    con_hexn(ncm_link.mac[k], 2);
-                    if (k < 5) con_puts(":");
-                }
-                con_puts(", ntb in "); con_dec(ncm_link.ntb_in_max);
-                con_puts("\n");
-                /* No watchdog here: the proxy loop owns both links at once, so
-                 * this one going quiet costs nothing and must not end the loop. */
-                ncm_proxy_init(&ncm_proxy_link, &ncm_link, 0);
-                ncm_proxy_announce(&ncm_proxy_link);
-                dual_second = &ncm_proxy_link.io;
-                usb_state->magic = USB_STATE_MAGIC;
-                usb_state->version = 1;
-    usb_state->size = sizeof(*usb_state);
-                con_puts("ncm: proxy also answering on udp [");
-                for (unsigned k = 0; k < 8; k++) {
-                    con_hexn(((uint32_t)ncm_proxy_link.address[k * 2] << 8) |
-                             ncm_proxy_link.address[k * 2 + 1], 4);
-                    if (k < 7) con_puts(":");
-                }
-                con_puts("]:"); con_dec(NCM_PROXY_PORT); con_puts("\n");
-            }
-        }
-    }
     con_puts("Initialization complete.\n");
     con_puts("Running proxy...\n");
     /* Anchor the live panel under the log, but never past the last row: on a
@@ -1193,16 +713,18 @@ static void proxy_main(void)
     status_row = con_row() + 1;
     if (status_row + 7 > con_rows()) status_row = con_rows() > 7 ? con_rows() - 7 : 0;
 
-    /* Only the USB path can be missing its console; the UART one always has it. */
-    dual_first = (mode == MODE_USB_PROXY && no_cdc) ? &null_io : proxy_io;
-    proxy_io = &dual_io;
     for (;;) {
         q1n1_proxy_run(proxy_io, Q1N1_START_BOOT, 0, (uintptr_t)&info);
         if (!q1n1_next_stage.entry) continue;
         /* Chainload: stop the tick first so the outgoing vectors and driver
          * state cannot be entered once the new stage owns the hardware. */
         q1n1_gic_stop(&gic);
-        direct_stop(); /* No DMA may refer to the outgoing stage's EP0 state. */
+        if (q1n1_usb_ports_handoff(usb_ports)) {
+            q1n1_next_stage.entry = q1n1_next_stage.argument = 0;
+            con_puts("q1n1: chainload refused: USB DMA did not halt\n");
+            q1n1_gic_start(&gic);
+            continue;
+        }
         uint64_t entry = q1n1_next_stage.entry;
         uint64_t argument = q1n1_next_stage.argument ? q1n1_next_stage.argument : (uintptr_t)&info;
         q1n1_next_stage.entry = q1n1_next_stage.argument = 0;
@@ -1316,7 +838,7 @@ static efi_status proxy_efi_main(efi_handle handle, struct efi_system_table *st,
             info.mode = MODE_USB_PROXY;
             /* Published so host tools never read through a null pointer; the
              * counters simply stay zero because the gadget is never started. */
-            info.usb_stats = (uintptr_t)&usb.stats;
+            info.usb_stats = 0;
         } else {
         usb_ebs_saved(&boot.snapshot, &saved);
         if (qdwc3_rd(USB_EBS_DWC3_BASE + 0xc120) != saved.gsnpsid) {
@@ -1329,7 +851,7 @@ static efi_status proxy_efi_main(efi_handle handle, struct efi_system_table *st,
         dma_arena = (uint8_t *)(uintptr_t)address;
         info.dma_base = address; info.dma_size = QDWC3_ARENA_SIZE;
         info.usb_dwc3 = USB_EBS_DWC3_BASE; info.usb_qscratch = USB_EBS_QSCRATCH_BASE;
-        info.usb_snapshot = (uintptr_t)&boot.snapshot; info.usb_stats = (uintptr_t)&usb.stats;
+        info.usb_snapshot = (uintptr_t)&boot.snapshot; info.usb_stats = 0;
         mode = MODE_USB_PROXY;
         info.mode = MODE_USB_PROXY;
         }
@@ -1407,7 +929,9 @@ extern const uint64_t q1n1_stage_config;
 void q1n1_stage_main(struct q1n1_bootinfo *inherited)
 {
     stage_config = q1n1_stage_config;
-    info = *inherited;
+    memset(&info, 0, sizeof(info));
+    memcpy(&info, inherited, inherited->size < sizeof(info) ? inherited->size : sizeof(info));
+    info.size = sizeof(info);
     info.stage_generation++;
     /* Where this stage actually runs, which is not necessarily the region base:
      * successive chainloads alternate slots, and the host picks the free one by
@@ -1416,7 +940,7 @@ void q1n1_stage_main(struct q1n1_bootinfo *inherited)
     info.image_size = info.stage_size;
     info.proxy_stats = (uintptr_t)&q1n1_proxy_stats;
     info.exception = (uintptr_t)&exception;
-    info.usb_stats = (uintptr_t)&usb.stats;
+    info.usb_stats = 0;
     info.gic_stats = (uintptr_t)&gic;
     hz = info.timer_hz;
     rt = (struct efi_runtime_services *)(uintptr_t)info.runtime_services;

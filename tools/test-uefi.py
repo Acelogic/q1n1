@@ -16,7 +16,7 @@ import subprocess
 import time
 
 
-def run_proxy_checks(socket_path):
+def run_proxy_checks(socket_path, build_dir):
     """Drive the post-ExitBootServices proxy over QEMU's PL011 with the real client."""
     spec = importlib.util.spec_from_file_location('q1n1proxy', Path(__file__).resolve().parent / 'q1n1proxy.py')
     assert spec and spec.loader
@@ -104,7 +104,7 @@ def run_proxy_checks(socket_path):
 
     # Chainload: upload a flat stage, jump to it, and prove the new code is the
     # one answering (it inherits bootinfo and increments stage_generation).
-    stage = Path(__file__).resolve().parents[1] / 'build' / 'uefi' / 'q1n1-stage-qemu.bin'
+    stage = build_dir / 'q1n1-stage-qemu.bin'
     check(info['stage_base'] and info['stage_size'], f'stage region reserved at {info["stage_base"]:#x}')
     check(stage.exists(), 'stage binary built')
     check(info['stage_generation'] == 0, 'running payload is generation 0')
@@ -299,7 +299,7 @@ with (out / 'qemu.log').open('w') as err:
             raise RuntimeError(f'Boot marker missing: {expected}; inspect {serial}')
         proxy_checks, proxy = (None, None)
         if args.proxy:
-            proxy_checks, proxy = run_proxy_checks(proxy_socket)
+            proxy_checks, proxy = run_proxy_checks(proxy_socket, build_dir)
         # Give the console, logo and optional exception screen time to finish.
         # The fixture needs ExitBootServices plus the driver's 1 s reset timeout.
         time.sleep(6 if args.usb_ebs_fixture else 1)

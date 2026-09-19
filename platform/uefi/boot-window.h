@@ -11,6 +11,14 @@
  * link instead. Only reachable with --auto. */
 #define Q1N1_BOOT_PROXY_NCM 3u
 
+/* In automatic mode, a configured USB0 link must not fall through to Windows
+ * just because no host process claimed the boot window in 25 seconds. */
+static inline uint32_t q1n1_timeout_choice(int automatic, int usb0_configured)
+{
+    if (!automatic) return Q1N1_BOOT_WINDOWS;
+    return usb0_configured ? Q1N1_BOOT_PROXY : Q1N1_BOOT_PROXY_NCM;
+}
+
 struct q1n1_boot_result {
     uint32_t choice, return_armed;
     uint16_t boot_current, reserved16;
@@ -20,7 +28,7 @@ struct q1n1_boot_result {
 };
 
 /* Returns 0 with result->choice set, or an error (USB stopped, nothing armed). */
-/* `automatic` lets the window pick q1n1 on timeout when no USB0 host ever
- * appeared, which is what makes booting with only the bare cable work. */
+/* `automatic` picks q1n1 on timeout with a configured USB0 host or through
+ * direct-link discovery when USB0 has no host. */
 efi_status q1n1_boot_window(efi_handle image, struct efi_system_table *st,
                             struct q1n1_boot_result *result, int automatic);

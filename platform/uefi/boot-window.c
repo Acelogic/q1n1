@@ -5,7 +5,7 @@
  * The Mac (or the laptop keyboard) chooses:
  *   proxy       arm BootNext = BootCurrent (the q1n1 UEFI Shell entry), then EL2 proxy
  *   proxy once  EL2 proxy without arming a return
- *   windows     continue to Windows (also the timeout and every refusal)
+ *   windows     continue to Windows (also the non-auto timeout and every refusal)
  *   shell       stop in the UEFI shell
  * For proxy, DWC3/qscratch registers are captured while firmware runs and after
  * it stops, exactly as q1n1-usb-ebs-prep.efi did, for the post-EBS takeover. */
@@ -19,7 +19,7 @@
 #include "boot-window.h"
 #include "ucsi-console.h"
 
-#define WINDOW_SECONDS 25       /* default decision when no host opens the port */
+#define WINDOW_SECONDS 25       /* --auto selects q1n1 when no host answers */
 #define HOST_SECONDS 20         /* extra time once a host opens the port */
 #define TYPING_SECONDS 60       /* extra time after any received byte */
 #define DRAIN_SECONDS 2
@@ -193,12 +193,15 @@ static void capture(uint32_t regs[], uint32_t qs[])
 }
 static uint64_t now_ticks(void) { uint64_t v; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(v)); return v; }
 
-static void banner(const struct q1n1_boot_result *r, uint64_t seconds_left)
+static void banner(const struct q1n1_boot_result *r, uint64_t seconds_left,
+                   int automatic)
 {
     say("Q1N1 BOOT WINDOW v1 bootcurrent=");
     say_hex(r->boot_current, 4);
     say(r->entry_status ? " return=unavailable" : " return=available");
-    say(" commands: proxy | proxy once | windows | shell | status; default windows in 0x");
+    say(" commands: proxy | proxy once | windows | shell | status; default ");
+    say(automatic ? "q1n1" : "windows");
+    say(" in 0x");
     say_hex(seconds_left, 2);
     say(" s\r\n");
 }
@@ -213,7 +216,8 @@ efi_status q1n1_boot_window(efi_handle image, struct efi_system_table *st,
     r->choice = Q1N1_BOOT_WINDOWS;
     queue.length = line_length = 0;
     out(st, "q1n1 boot window v1: USB0 CDC ACM 1209:316D serial A16-Q1N1-BOOT\n"
-            "Keys: P proxy, O proxy once, W Windows, S or ESC shell. Default: Windows.\n");
+            "Keys: P proxy, O proxy once, W Windows, S or ESC shell.\n");
+    out(st, automatic ? "Default: q1n1 after 25 s.\n" : "Default: Windows after 25 s.\n");
     if (!rt) return EFI_UNSUPPORTED;
     r->entry_status = shell_entry(rt, &r->boot_current);
     number(st, "BootCurrent: ", r->boot_current);
@@ -285,7 +289,7 @@ efi_status q1n1_boot_window(efi_handle image, struct efi_system_table *st,
                     if (deadline < now + hz * TYPING_SECONDS) deadline = now + hz * TYPING_SECONDS;
                 }
                 if (!held && (c.lines & 1) && (!last_banner || now - last_banner > hz * 3)) {
-                    banner(r, now < deadline ? (deadline - now) / hz : 0);
+                    banner(r, now < deadline ? (deadline - now) / hz : 0, automatic);
                     last_banner = now;
                 }
                 struct { uint16_t scan, unicode; } key;
@@ -344,15 +348,11 @@ efi_status q1n1_boot_window(efi_handle image, struct efi_system_table *st,
                 }
                 if (!held && !chose && now > deadline) {
                     say("TIMEOUT\r\n");
-                    /* With --auto and nothing ever attached to USB0, the dock is
-                     * absent and Windows is not what the user is waiting for:
-                     * go to q1n1 and let the NCM link be the console. */
-                    if (automatic && !c.configured) {
-                        r->choice = Q1N1_BOOT_PROXY_NCM;
-                        arm = 1;    /* one-shot, so it has to be renewed each boot */
-                    } else {
-                        r->choice = Q1N1_BOOT_WINDOWS;
-                    }
+                    /* --auto chooses q1n1 even when USB0 enumerated but no
+                     * host command arrived. With no USB0 host, EL2 discovers
+                     * the direct USB1 link after ExitBootServices. */
+                    r->choice = q1n1_timeout_choice(automatic, c.configured);
+                    arm = automatic;
                     chose = 1;
                 }
                 if (chose) {
