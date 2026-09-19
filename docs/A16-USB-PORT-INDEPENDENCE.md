@@ -4,7 +4,8 @@ Status: implementation passes native/QEMU checks. All six direct-cable
 Mac/A16 pairings pass; the dock passes both A16 ports through the second Mac
 port. Physical port-pairing tests stopped at the user's request. The tested EFI
 was installed on the ESP and independently hash-verified through Windows SSH
-at 21:09 UTC. Verification of the next firmware boot is pending.
+at 21:09 UTC. The installed image subsequently answered at generation 0 and
+EL2 over direct NCM after the user reconnected the cable.
 
 ## Physical evidence before changes
 
@@ -155,17 +156,20 @@ expected Samsung boot disk, and the existing 450-MiB ESP on disk 0, partition
   the new payload, startup script, old payload backup, and preserved loaders.
 - The verified boot helper armed the one-time q1n1 entry and requested a
   Windows restart. No q1n1 USB endpoint appeared within the initial 120-second
-  wait. This does not yet establish the screen state or a payload failure;
-  successful execution of the installed image has not been confirmed.
+  wait. The user confirmed q1n1 on screen and reconnected the direct cable;
+  discovery subsequently selected `udp://en5` on USB1. Immediate unattended
+  reconnection across that restart is not established by this run.
+- The installed image answered at EL2, generation 0, image base `0xbde23000`.
+  Its 89,348-byte PE `.text` readback exactly matches the installation artifact:
+  SHA-256 `7aeec6ea38f0902d5c0794fde6f15f04d9e6435140b31cef17f70b41b8851301`.
+  A 256-KiB write/read equality check and 100 NOPs passed on this fresh boot.
 
 ## Qualification still required
 
 The successful simultaneous and direct-only tests do not prove every physical
-Mac/A16 dock pairing or booting the new EFI from the ESP. Remaining dock
-pairings were deferred at the user's request. The persistent installation is
-verified, but a fresh boot of that EFI still needs runtime confirmation.
-Keep successful RAM-stage qualification separate from the installed image's
-pending boot qualification.
+Mac/A16 dock pairing. Remaining dock pairings were deferred at the user's
+request. The installed EFI now has runtime confirmation; automatic recovery
+across restart without a manual cable reconnect still needs qualification.
 
 ## Build isolation
 
