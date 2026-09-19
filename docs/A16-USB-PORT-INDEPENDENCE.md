@@ -2,8 +2,9 @@
 
 Status: implementation passes native/QEMU checks. All six direct-cable
 Mac/A16 pairings pass; the dock passes both A16 ports through the second Mac
-port. Physical testing stopped at the user's request. The fixes are running
-in RAM; the installed EFI has not been replaced.
+port. Physical port-pairing tests stopped at the user's request. The tested EFI
+was installed on the ESP and independently hash-verified through Windows SSH
+at 21:09 UTC. Verification of the next firmware boot is pending.
 
 ## Physical evidence before changes
 
@@ -123,7 +124,7 @@ end physical testing. The first Mac port's dock pairings were not completed.
 The running generation-2 stage's 57,364-byte `.text` matches the isolated
 `hardware-alt.elf` build exactly: SHA-256
 `822f4b4b1c22ceb33d38b01e4ff01b4f5e180b329e31447dbf036562643525a7`.
-The pending EFI installation artifact is 678,912 bytes, SHA-256
+The installed EFI artifact is 678,912 bytes, SHA-256
 `00ae6161ab2a588f40a0f407238b87103265c345ecb79950851db6d9892d3383`.
 
 Run `python3 tools/q1n1proxy.py info` to display the selected endpoint and both
@@ -134,16 +135,37 @@ Run `python3 tools/test-q1n1-ports.py` for the new lifecycle, device-halt,
 boot-choice and reader regressions, alongside the existing protocol/xHCI/NCM
 and QEMU suites.
 
+## Persistent installation, 2026-09-19
+
+Windows SSH confirmed administrator access, model UX3607OA, BIOS 312, the
+expected Samsung boot disk, and the existing 450-MiB ESP on disk 0, partition
+12. The guarded installer completed at `2026-09-19T21:09:17.7057071Z`.
+
+- Installed `\EFI\q1n1\q1n1-usb.efi`: SHA-256
+  `00ae6161ab2a588f40a0f407238b87103265c345ecb79950851db6d9892d3383`.
+- Previous payload backed up as `q1n1-usb-e0aee7e7c736.efi` in the Windows
+  bring-up directory; backup SHA-256
+  `e0aee7e7c736831c48c039f68787c99deac6562cab9f28ab4fe5f00711d1215f`.
+- `\startup.nsh` SHA-256:
+  `2b2f169f5afdace01bd0efe68e0e574a928ad55e51f9ae42805d22ce83260a00`.
+- The known-good `\EFI\q1n1\q1n1.efi`, Windows boot manager, and firmware
+  boot order were verified unchanged. Windows remains first in normal boot
+  order. The prior installation records were also backed up.
+- After the installer unmounted the ESP, a separate mount and read verified
+  the new payload, startup script, old payload backup, and preserved loaders.
+- The verified boot helper armed the one-time q1n1 entry and requested a
+  Windows restart. No q1n1 USB endpoint appeared within the initial 120-second
+  wait. This does not yet establish the screen state or a payload failure;
+  successful execution of the installed image has not been confirmed.
+
 ## Qualification still required
 
 The successful simultaneous and direct-only tests do not prove every physical
 Mac/A16 dock pairing or booting the new EFI from the ESP. Remaining dock
-pairings were deferred at the user's request. Cold-boot qualification requires
-installing the new EFI. The current EL2 payload has no A16 NVMe/GPT/FAT storage
-path, and firmware file/block services cannot be used after ExitBootServices.
-An updater in q1n1's pre-ExitBootServices phase could use firmware ESP access;
-it is not implemented here. No persistent disk update was performed.
-Keep the tested RAM stage distinct from the older installed boot image.
+pairings were deferred at the user's request. The persistent installation is
+verified, but a fresh boot of that EFI still needs runtime confirmation.
+Keep successful RAM-stage qualification separate from the installed image's
+pending boot qualification.
 
 ## Build isolation
 
