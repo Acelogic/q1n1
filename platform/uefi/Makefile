@@ -21,7 +21,7 @@ STAGE_CFLAGS := --target=aarch64-unknown-none-elf -O2 -ffreestanding -fno-builti
     -fno-stack-protector -mgeneral-regs-only -mno-outline-atomics -fno-pic -mcmodel=small \
     -Wall -Wextra -Werror -Iplatform/uefi -DQ1N1_STAGE -MMD -MP
 STAGE_OBJS := $(addprefix $(OUT)/stage/,main.obj entry.obj q1n1-proxy.obj proxy-asm.obj \
-    qcom-dwc3.obj usb-ports.obj gicv3.obj console.obj sysinfo.obj fbcon.obj xhci.obj ncm.obj ncm-proxy.obj)
+    qcom-dwc3.obj usb-ports.obj gicv3.obj console.obj sysinfo.obj fbcon.obj xhci.obj ncm.obj ncm-proxy.obj preload.obj sha256.obj)
 
 .PHONY: all clean usb-probe usb-role-probe usb-role-fixture usb-role-change usb-serial usb-typec-probe usb-ucsi-probe
 all: $(OUT)/q1n1.efi stage
@@ -267,9 +267,18 @@ $(OUT)/proxy-asm.obj: platform/uefi/proxy-asm.S
 	@mkdir -p $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(OUT)/preload.obj: platform/uefi/preload.c platform/uefi/preload.h platform/uefi/sha256.h platform/uefi/efi.h
+	@mkdir -p $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/sha256.obj: platform/uefi/sha256.c platform/uefi/sha256.h
+	@mkdir -p $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(OUT)/q1n1.efi: $(OUT)/main.obj $(OUT)/entry-frame.obj $(OUT)/boot-window.obj $(OUT)/ucsi-console.obj \
     $(OUT)/q1n1-proxy.obj $(OUT)/proxy-asm.obj $(OUT)/qcom-dwc3.obj $(OUT)/usb-ports.obj $(OUT)/gicv3.obj \
-    $(OUT)/console.obj $(OUT)/sysinfo.obj $(OUT)/fbcon.obj $(OUT)/xhci.obj $(OUT)/ncm.obj $(OUT)/ncm-proxy.obj
+    $(OUT)/console.obj $(OUT)/sysinfo.obj $(OUT)/fbcon.obj $(OUT)/xhci.obj $(OUT)/ncm.obj $(OUT)/ncm-proxy.obj \
+    $(OUT)/preload.obj $(OUT)/sha256.obj
 	$(LD) /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:arm64 \
 	    /dynamicbase /out:$@ $^
 

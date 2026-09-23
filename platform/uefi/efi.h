@@ -29,7 +29,7 @@ struct efi_boot_services {
     efi_header header;
     void *raise_tpl, *restore_tpl;
     efi_status (*allocate_pages)(uint32_t, uint32_t, uint64_t, uint64_t *);
-    void *free_pages;
+    efi_status (*free_pages)(uint64_t, uint64_t);
     efi_status (*get_memory_map)(uint64_t *, void *, uint64_t *, uint64_t *, uint32_t *);
     void *allocate_pool;
     efi_status (*free_pool)(void *);
@@ -42,7 +42,8 @@ struct efi_boot_services {
     efi_status (*exit_boot_services)(efi_handle, uint64_t);
     void *get_next_monotonic_count, *stall;
     efi_status (*set_watchdog)(uint64_t, uint64_t, uint64_t, char16 *);
-    void *connect_controller, *disconnect_controller;
+    efi_status (*connect_controller)(efi_handle, efi_handle *, void *, uint8_t);
+    void *disconnect_controller;
     void *open_protocol, *close_protocol, *open_protocol_information;
     void *protocols_per_handle;
     efi_status (*locate_handle_buffer)(uint32_t, efi_guid *, void *, uint64_t *, efi_handle **);
@@ -87,8 +88,25 @@ struct efi_gop_mode {
     uint64_t info_size, framebuffer, framebuffer_size;
 };
 struct efi_gop { void *query, *set, *blt; struct efi_gop_mode *mode; };
+/* Read-only subset of UEFI 2.x Simple File System / File Protocol. */
+struct efi_file {
+    uint64_t revision;
+    efi_status (*open)(struct efi_file *, struct efi_file **, const char16 *, uint64_t, uint64_t);
+    efi_status (*close)(struct efi_file *);
+    void *delete_file;
+    efi_status (*read)(struct efi_file *, uint64_t *, void *);
+    void *write, *get_position, *set_position;
+    efi_status (*get_info)(struct efi_file *, efi_guid *, uint64_t *, void *);
+};
+struct efi_simple_fs {
+    uint64_t revision;
+    efi_status (*open_volume)(struct efi_simple_fs *, struct efi_file **);
+};
+_Static_assert(offsetof(struct efi_file, read) == 32, "UEFI File.Read ABI");
+_Static_assert(offsetof(struct efi_file, get_info) == 64, "UEFI File.GetInfo ABI");
 _Static_assert(offsetof(struct efi_boot_services, exit_boot_services) == 232, "UEFI EBS ABI");
 _Static_assert(offsetof(struct efi_boot_services, free_pool) == 72, "UEFI FreePool ABI");
+_Static_assert(offsetof(struct efi_boot_services, connect_controller) == 264, "UEFI ConnectController ABI");
 _Static_assert(offsetof(struct efi_boot_services, locate_handle_buffer) == 312, "UEFI LocateHandleBuffer ABI");
 _Static_assert(offsetof(struct efi_boot_services, locate_protocol) == 320, "UEFI LocateProtocol ABI");
 _Static_assert(offsetof(struct efi_system_table, boot) == 96, "UEFI system ABI");

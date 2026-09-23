@@ -64,7 +64,8 @@ BOOTINFO_FIELDS = (
     'boot_current return_armed arm_status entry_status timer_hz '
     'gic_distributor gic_redistributor gic_stats '
     'stage_base stage_size stage_generation '
-    'xhci_base xhci_stats ncm_stats ncm_proxy_stats usb_ports usb_port_count'
+    'xhci_base xhci_stats ncm_stats ncm_proxy_stats usb_ports usb_port_count '
+    'preload_table preload_size preload_status preload_verify preload_diagnostics'
 ).split()
 
 # platform/uefi/main.c struct q1n1_exception.
@@ -324,12 +325,22 @@ class Proxy:
     P_IC_IALLUIS, P_IC_IALLU, P_IC_IVAU = 0x300, 0x301, 0x302
     P_DC_IVAC, P_DC_ZVA, P_DC_CVAC = 0x303, 0x307, 0x308
     P_DC_CVAU, P_DC_CIVAC = 0x309, 0x30A
+    P_FB_INIT, P_FB_SHUTDOWN = 0xD00, 0xD01
 
     def __init__(self, link: Link):
         self.link = link
         link.exception_handler = self.on_exception
         self.exceptions = []
         self.resume_skip = True
+
+    def fb_console(self, enabled):
+        """Enable q1n1 status drawing, or yield the panel without clearing it.
+
+        This does not power off the display. Disabled state persists across
+        calls so inspecting a stopped guest cannot overwrite its console.
+        Returns the previous enabled state.
+        """
+        return self.request(self.P_FB_INIT if enabled else self.P_FB_SHUTDOWN, 0)
 
     def request(self, opcode, *args, no_reply=False, timeout=None):
         values = list(args) + [0] * (6 - len(args))

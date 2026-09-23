@@ -38,6 +38,7 @@ enum {
     P_MEMCPY64 = 0x200, P_MEMCPY32, P_MEMCPY16, P_MEMCPY8, P_MEMSET64, P_MEMSET32, P_MEMSET16, P_MEMSET8,
     P_IC_IALLUIS = 0x300, P_IC_IALLU, P_IC_IVAU, P_DC_IVAC, P_DC_ISW, P_DC_CSW, P_DC_CISW, P_DC_ZVA,
     P_DC_CVAC, P_DC_CVAU, P_DC_CIVAC,
+    P_FB_INIT = 0xd00, P_FB_SHUTDOWN,
 };
 
 volatile uint64_t q1n1_exc_guard, q1n1_exc_count;
@@ -148,6 +149,12 @@ static int proxy_request(const struct q1n1_io *io, const uint8_t *request, uint8
         break;
     case P_GET_BOOTARGS: value = q1n1_platform_bootargs(); break;
     case P_GET_BASE: value = q1n1_platform_base(); break;
+    case P_FB_INIT: value = q1n1_platform_fb_console(1); break;
+    case P_FB_SHUTDOWN:
+        /* Keep the guest's pixels; restoring a saved logo is not supported. */
+        if (a[0]) { status = S_BADCMD; break; }
+        value = q1n1_platform_fb_console(0);
+        break;
     case P_UDELAY: delay(io, a[0]); break;
     case P_SET_EXC_GUARD: q1n1_exc_count = 0; guard = a[0]; break;
     case P_GET_EXC_COUNT: value = q1n1_exc_count; q1n1_exc_count = 0; break;

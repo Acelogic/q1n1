@@ -14,9 +14,11 @@ import socket
 import struct
 import subprocess
 import time
+import hashlib
+import preload
 
 
-def run_proxy_checks(socket_path, build_dir):
+def run_proxy_checks(socket_path, build_dir, preload_payload=None):
     """Drive the post-ExitBootServices proxy over QEMU's PL011 with the real client."""
     spec = importlib.util.spec_from_file_location('q1n1proxy', Path(__file__).resolve().parent / 'q1n1proxy.py')
     assert spec and spec.loader
@@ -48,6 +50,30 @@ def run_proxy_checks(socket_path, build_dir):
           'bootinfo heap, memory map, framebuffer and timer')
 
     heap = info['heap_base']
+    cache = preload.resident_cache(proxy, info)
+    preload_status = preload.diagnostics(proxy, info)
+    if preload_payload is None:
+        check(not cache, 'no manifest leaves cache absent and proxy usable')
+        check(preload_status['phase'] == 2 and preload_status['manifests'] == 0,
+              'diagnostics distinguish an absent manifest')
+    else:
+        check(preload_status['phase'] == 7 and preload_status['manifests'] == 1
+              and preload_status['read_bytes'] == len(preload_payload),
+              'diagnostics identify the completed SSD load and byte count')
+        check(len(cache) == 1 and cache[0]['sha256'] == hashlib.sha256(preload_payload).hexdigest(),
+              'EFI loaded and hashed the fixture from its filesystem')
+        check(proxy.readmem(cache[0]['base'], len(preload_payload)) == preload_payload,
+              'preloaded file bytes survive ExitBootServices')
+        check(proxy.call(info['preload_verify'], 0) == 1, 'resident cache hash verifies')
+        proxy.write8(cache[0]['base'], preload_payload[0] ^ 1)
+        check(proxy.call(info['preload_verify'], 0) == 0, 'resident verifier rejects changed data')
+        proxy.write8(cache[0]['base'], preload_payload[0])
+        check(proxy.call(info['preload_verify'], 1) == 0, 'resident verifier rejects invalid index')
+        destination = next(lo for kind, lo, hi in preload.memory_regions(proxy, info)
+                           if kind == 7 and hi-lo >= len(preload_payload))
+        preload.copy_cached(proxy, info, cache[0], destination, len(preload_payload))
+        check(proxy.readmem(destination, len(preload_payload)) == preload_payload,
+              'host cache-copy path reproduces the complete fixture in free RAM')
     payload = random.randbytes(128 * 1024)
     proxy.writemem(heap, payload)
     check(proxy.readmem(heap, len(payload)) == payload, '128 KiB memory round trip')
@@ -125,6 +151,12 @@ def run_proxy_checks(socket_path, build_dir):
         check(after['heap_base'] == info['heap_base'] and after['memory_map'] == info['memory_map'],
               f'chainload {generation}: inherited the heap and memory map')
         check(proxy.read32(after['heap_base']) is not None, f'chainload {generation}: memory still readable')
+        if preload_payload is not None:
+            inherited_cache = preload.resident_cache(proxy, after)
+            check(inherited_cache == cache and proxy.call(after['preload_verify'], 0) == 1,
+                  f'chainload {generation}: reserved cache and fresh verifier survive')
+            check(preload.diagnostics(proxy, after) == preload_status,
+                  f'chainload {generation}: original EFI load diagnostics survive')
         stage_gic = struct.unpack('<9Q5I', proxy.readmem(after['gic_stats'], 92, live=True))
         check(stage_gic[13] == 0 and stage_gic[9] == 26, f'chainload {generation}: own GIC tick running')
         seen.append(link)
@@ -161,7 +193,10 @@ mode_args.add_argument('--proxy', action='store_true', help='Run the EL2 proxy o
 mode_args.add_argument('--boot-window', action='store_true', help='Check the A16 boot window refuses unsupported firmware and continues to Windows')
 parser.add_argument('--firmware', default='/opt/homebrew/share/qemu/edk2-aarch64-code.fd')
 parser.add_argument('--build-dir', type=Path, help='Use binaries from an isolated build directory')
+parser.add_argument('--preload', action='store_true', help='With --proxy, exercise an SSD-cache fixture across EBS and chainloads')
 args = parser.parse_args()
+if args.preload and not args.proxy:
+    parser.error('--preload requires --proxy')
 if args.usb_serial_v3:
     args.usb_serial = True
 if args.usb_ucsi_status_v2 or args.usb_ucsi_device0:
@@ -196,6 +231,16 @@ if args.boot_window:
 out = build_dir / f'qemu-el{args.el}-{mode}'
 esp = out / 'esp'
 esp.mkdir(parents=True, exist_ok=True)
+preload_payload = None
+preload_path = esp / 'Snapintosh' / 'q1n1-preload.bin'
+if args.preload:
+    preload_path.parent.mkdir(exist_ok=True)
+    preload_payload = bytes(range(256)) * 513 + b'EFI cache fixture'
+    (preload_path.parent / 'fixture.bin').write_bytes(preload_payload)
+    preload_path.write_bytes(preload.manifest([
+        ('\\Snapintosh\\fixture.bin', len(preload_payload), hashlib.sha256(preload_payload).hexdigest())]))
+else:
+    preload_path.unlink(missing_ok=True)
 binary = 'q1n1-usb-role-change.efi' if args.usb_role_change else 'q1n1-usb-role-probe.efi' if args.usb_role_probe else 'q1n1-usb-probe.efi' if probe else 'q1n1.efi'
 if args.usb_serial:
     binary = 'q1n1-usb-serial-v3.efi' if args.usb_serial_v3 else 'q1n1-usb-serial.efi'
@@ -299,7 +344,7 @@ with (out / 'qemu.log').open('w') as err:
             raise RuntimeError(f'Boot marker missing: {expected}; inspect {serial}')
         proxy_checks, proxy = (None, None)
         if args.proxy:
-            proxy_checks, proxy = run_proxy_checks(proxy_socket, build_dir)
+            proxy_checks, proxy = run_proxy_checks(proxy_socket, build_dir, preload_payload)
         # Give the console, logo and optional exception screen time to finish.
         # The fixture needs ExitBootServices plus the driver's 1 s reset timeout.
         time.sleep(6 if args.usb_ebs_fixture else 1)

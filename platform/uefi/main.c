@@ -20,6 +20,7 @@
 #include "q1n1-bootinfo.h"
 #include "boot-window.h"
 #include "q1n1-proxy.h"
+#include "preload.h"
 
 static struct {
     volatile uint32_t *pixels;
@@ -59,6 +60,11 @@ static struct qdwc3_saved saved;
 static struct q1n1_boot_result boot;
 #endif
 static struct q1n1_bootinfo info;
+static uint64_t preload_verify(uint64_t index)
+{
+    if(info.preload_size!=sizeof(struct q1n1_preload_cache)) return 0;
+    return (uint64_t)q1n1_preload_verify((const void *)(uintptr_t)info.preload_table,index);
+}
 static struct q1n1_exception exception;
 static const struct q1n1_io *proxy_io;
 static uint8_t *dma_arena;
@@ -417,6 +423,14 @@ void q1n1_platform_reboot(void) { reset_now(); }
 static uint64_t last_status;
 static uint64_t last_shift;
 static uint64_t last_swap;
+static int console_enabled = 1;
+
+uint64_t q1n1_platform_fb_console(int enabled)
+{
+    uint64_t previous = console_enabled;
+    console_enabled = !!enabled;
+    return previous;
+}
 
 /* How often the console steps around its anti-burn-in grid. Two minutes is well
  * inside the hours it takes an OLED to retain an image, and far enough apart
@@ -474,6 +488,7 @@ static void status_panel(void)
 }
 static void status_tick(void)
 {
+    if (!console_enabled) return;
     uint64_t now = counter();
     if (now - last_status >= hz) { last_status = now; status_panel(); }
 }
@@ -607,10 +622,10 @@ static void proxy_main(void)
     last_shift = last_swap = proxy_start;
     con_init(info.fb_base, (uint32_t)info.fb_width, (uint32_t)info.fb_height,
              (uint32_t)info.fb_stride, (uint32_t)info.fb_format);
-    /* Before anything is drawn: this decides how the column is sized, and a
-     * machine whose panel does not retain an image gets a console that stays
-     * put. The line naming the decision is printed with the rest of the log. */
-    con_retains(sysinfo_panel_retains(info.smbios3));
+    /* Keep diagnostics fixed. Automatic pixel shifts and side swaps also
+     * move pixels drawn by a guest, corrupting its independently positioned
+     * console. The proxy can relinquish all status drawing at handoff. */
+    con_retains(0);
     con_clear();
     switch (stage_config & 3) {
     case LOGO_CORNER: draw_logo_for_generation(info.stage_generation); break;
@@ -649,16 +664,7 @@ static void proxy_main(void)
     con_puts(" [s="); con_dec(info.fb_stride); con_puts("] @"); con_hexn(info.fb_base, 8); con_puts("\n");
     con_puts("fb console: max rows "); con_dec(con_rows()); con_puts(", max cols "); con_dec(con_cols());
     con_puts("\n");
-    /* Say which way this went. If the panel is OLED and this line reads "fixed",
-     * the product match is wrong and the screen is unprotected -- which is not
-     * something to discover from a burnt-in panel months later. */
-    con_puts("fb panel: ");
-    if (sysinfo_panel_retains(info.smbios3)) {
-        con_puts("retains image, console moves (grid "); con_dec(CON_SHIFT_SECONDS);
-        con_puts(" s, sides "); con_dec(CON_SWAP_SECONDS); con_puts(" s)\n");
-    } else {
-        con_puts("not known to retain, console fixed\n");
-    }
+    con_puts("fb panel: console fixed, automatic movement disabled\n");
     con_puts("fb: display logo\n");
     con_puts("q1n1 mem: heap "); con_dec(info.heap_size >> 20); con_puts(" MiB @ "); con_hexn(info.heap_base, 8);
     con_puts(", dma "); con_dec(info.dma_size >> 20); con_puts(" MiB @ "); con_hexn(info.dma_base, 8);
@@ -883,6 +889,17 @@ static efi_status proxy_efi_main(efi_handle handle, struct efi_system_table *st,
             break;
         }
     }
+    /* All filesystem reads and allocations finish before the final memory map.
+     * Cache errors leave the ordinary proxy/upload path available. */
+    if(st->boot->set_watchdog(0,0,0,NULL)) return refused;
+    firmware_out(st,"Checking SSD preload manifest.\n");
+    info.preload_status=q1n1_preload(st->boot,&info.preload_table,&info.preload_size);
+    info.preload_diagnostics=(uintptr_t)&q1n1_preload_diagnostics;
+    info.preload_verify=(uintptr_t)preload_verify;
+    firmware_out(st,info.preload_status==0 ? "SSD preload verified and reserved.\n" :
+                    info.preload_status==EFI_NOT_FOUND && q1n1_preload_diagnostics.phase==2 ?
+                    "No SSD preload manifest; host upload available.\n" :
+                    "SSD preload refused; host upload available.\n");
     uart.enabled = 0; /* The proxy owns the UART byte stream. */
     efi_status status = leave_firmware(handle, st, "Leaving firmware for the q1n1 proxy.\n");
     mode = MODE_FOOTHOLD;
@@ -932,6 +949,7 @@ void q1n1_stage_main(struct q1n1_bootinfo *inherited)
     memset(&info, 0, sizeof(info));
     memcpy(&info, inherited, inherited->size < sizeof(info) ? inherited->size : sizeof(info));
     info.size = sizeof(info);
+    info.preload_verify=(uintptr_t)preload_verify;
     info.stage_generation++;
     /* Where this stage actually runs, which is not necessarily the region base:
      * successive chainloads alternate slots, and the host picks the free one by

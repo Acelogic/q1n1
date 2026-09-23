@@ -55,6 +55,10 @@ def main():
         check(info['magic'] == q1n1proxy.MAGIC, 'bootinfo magic')
         check(info['heap_base'] == scratch, 'bootinfo heap base')
         check(proxy.get_base() == 0x140000000, 'image base')
+        check(proxy.fb_console(False) == 1, 'panel ownership yields from enabled state')
+        check(proxy.fb_console(False) == 0, 'panel ownership stays yielded across requests')
+        check(proxy.fb_console(True) == 0, 'panel console can be restored explicitly')
+        check(proxy.fb_console(True) == 1, 'restored panel state is retained')
 
         proxy.write64(scratch, 0x0123456789ABCDEF)
         check(proxy.read64(scratch) == 0x0123456789ABCDEF, 'write64/read64')
@@ -117,6 +121,13 @@ def main():
         stats = struct.unpack('<12Q', proxy.readmem(info['proxy_stats'], 96))
         check(stats[0] > 20 and stats[6] == 1 and stats[8] == 1,
               f'target counters (requests {stats[0]}, checksum errors {stats[6]}, bad commands {stats[8]})')
+
+        try:
+            proxy.request(proxy.P_FB_SHUTDOWN, 1)
+            check(False, 'unsupported logo restoration rejected')
+        except q1n1proxy.ProxyRemoteError:
+            check(True, 'unsupported logo restoration rejected')
+        check(proxy.fb_console(False) == 1, 'rejected option preserved panel ownership')
 
         proxy.reboot()
         check(target.wait(timeout=10) == 0, 'P_REBOOT reaches the platform hook')

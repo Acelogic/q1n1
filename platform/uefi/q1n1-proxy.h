@@ -54,6 +54,9 @@ uint64_t q1n1_platform_ticks(void);
 uint64_t q1n1_platform_hz(void);
 uint64_t q1n1_platform_bootargs(void);
 uint64_t q1n1_platform_base(void);
+/* Pause/resume q1n1's console drawing without changing GOP scanout.
+ * Returns the previous enabled state; ownership survives proxy calls. */
+uint64_t q1n1_platform_fb_console(int enabled);
 void q1n1_platform_reboot(void) __attribute__((noreturn));
 
 /* Leaf routines in proxy-asm.S (no stack use), safe under Q1N1_GUARD_RETURN. */

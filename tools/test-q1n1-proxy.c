@@ -64,6 +64,9 @@ uint64_t q1n1_platform_ticks(void)
 uint64_t q1n1_platform_hz(void) { return 1000000000u; }
 uint64_t q1n1_platform_bootargs(void) { return (uintptr_t)bootinfo; }
 uint64_t q1n1_platform_base(void) { return 0x140000000u; }
+static int console_enabled = 1;
+uint64_t q1n1_platform_fb_console(int enabled)
+{ uint64_t previous=console_enabled; console_enabled=!!enabled; return previous; }
 void q1n1_platform_reboot(void)
 {
     fprintf(stderr, "harness: reboot requested\n");
