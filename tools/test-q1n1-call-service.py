@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Build and run the call-service (host stop request) harness with sanitizers."""
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    binary = ROOT / 'build' / 'test-q1n1-call-service'
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['clang', '-std=gnu11', '-O1', '-g', '-fsanitize=address,undefined',
+                    '-fno-sanitize-recover=all', '-Wall', '-Wextra', '-Werror',
+                    f'-I{ROOT}/platform/uefi',
+                    str(ROOT / 'tools' / 'test-q1n1-call-service.c'),
+                    str(ROOT / 'platform' / 'uefi' / 'call-service.c'),
+                    '-o', str(binary)], check=True)
+    return subprocess.run([str(binary)]).returncode
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,5 +1,5 @@
+build/*
 !build/.keep
-build/
 __pycache__
 *.pyc
 *.macho
@@ -8,3 +8,39 @@ __pycache__
 *.rej
 /rust/target
 .idea
+.DS_Store
+._*
+.claude/
+.pytest_cache/
+*.dSYM/
+
+# Agent instruction files are not part of this repository.
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Generated locally from macOS shaders; never commit (tools/a16gpu-render/README.md, tools/a16gpu-p7/README.md).
+tools/a16gpu-render/render-shaders.json
+tools/a16gpu-p7/p7-shaders.json
+
+# Never commit Apple / vendor inputs or credentials.
+*.ipsw
+*.dmg
+*.im4p
+*.img4
+*.kc
+kernelcache*
+*.kext/
+*.mbn
+*.fw
+*.inf
+*.sys
+*.cat
+*.aml
+*.jsonl
+*.pem
+*.key
+*.p12
+id_*
+a16_q1n1*
+.env

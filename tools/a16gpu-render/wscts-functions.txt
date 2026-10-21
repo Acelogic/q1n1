@@ -1,0 +1,30 @@
+# device=Apple M3 Max
+PASS SkyLight     ShadowHorizontalBlurFragment       vs=SimpleVertexShadow           rt0=9777039baa7be23b
+PASS SkyLight     ShadowVerticalBlurFragment         vs=SimpleVertexShadow           rt0=26c8ba1e58b62383
+PASS SkyLight     ShadowVerticalBlurRGBAFragment     vs=SimpleVertexShadow           rt0=011a3fe290018383
+PASS SkyLight     InPlaceAlphaUnpremultiply          vs=SimpleVertex                 rt0=bcdab27a2fdd0383 [fbfetch]
+PASS SkyLight     InPlaceSover                       vs=SimpleVertex                 rt0=0d102655a6c06383 [fbfetch]
+PASS SkyLight     InPlaceColorOrClampEDR             vs=SimpleVertex                 rt0=0d102655a6c06383 [fbfetch]
+PASS SkyLight     GroupFadeTextureFragment           vs=SimpleVertex                 rt0=011a3fe290018383
+PASS SkyLight     UberCompositeFragment              vs=UberCompositeVertex          rt0=059827961ca2b383
+PASS SkyLight     UberResampleLanczosFragmentBGRA    vs=SimpleVertex                 rt0=cb585b7821747540
+PASS SkyLight     UberResampleLanczosFragmentYCbCr   vs=SimpleVertex                 rt0=26c8ba1e58b62383 rt1=4b404aa0a9cf4383
+PASS SkyLight     ColorFillYCbCr                     vs=SimpleColorVertex            rt0=26c8ba1e58b62383 rt1=4b404aa0a9cf4383
+PASS SkyLight     ColorFillYCbCr_ChromaOnly          vs=SimpleColorVertex            rt0=4b404aa0a9cf4383
+PASS SkyLight     BlurComposite                      vs=BlurCompositeVertex          rt0=cd9c8aa10198c383
+PASS SkyLight     AlphaTextureFragment               vs=SimpleVertex                 rt0=b7701b7b03cb4283
+PASS SkyLight     StyledDebugFillFragment            vs=StyledDebugFillVertex        rt0=8b4a8ce23c9c119f
+PASS SkyLight     ShadowCompositeFragment            vs=SimpleVertex                 rt0=011a3fe290018383
+PASS SkyLight     SimpleTextureFragment              vs=SimpleVertex                 rt0=30e21fd70a4cb199
+PASS SkyLight     SimpleTextureEDRFragment           vs=SimpleVertex                 rt0=80d415026abb0443
+PASS SkyLight     SimpleTextureScaleToSDRFragment    vs=SimpleVertex                 rt0=3fc51bbbfd926d83
+PASS SkyLight     SimpleTextureFragmentUV            vs=SimpleVertex                 rt0=977860287b8aed83
+PASS SkyLight     SimpleTextureTintFragment          vs=SimpleVertex                 rt0=011a3fe290018383
+PASS SkyLight     SimpleTextureLightingFragment      vs=SimpleTextureLightingVertex  rt0=0d102655a6c06383
+PASS SkyLight     SimpleColorFragment                vs=SimpleColorVertex            rt0=2e9918c766ea8183
+PASS SkyLight     SimpleGrayscale                    vs=SimpleVertex                 rt0=8f9067399fc17f8d
+PASS SkyLight     RippleFragment                     vs=SimpleVertex                 rt0=9b1fbeb32c3d2292
+PASS CoreDisplay  TextureCopy                        vs=ViewportToNDC                rt0=0d102655a6c06383
+PASS CoreDisplay  ColorFill                          vs=ViewportToNDC                rt0=0d102655a6c06383
+PASS CoreDisplay  GPUPass                            vs=ViewportToNDC                rt0=0d102655a6c06383
+# pass=28 fail=0

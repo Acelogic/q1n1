@@ -1,0 +1,340 @@
+{
+ "SimpleColorFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.0002,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "SimpleTextureFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.1359,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "SimpleTextureEDRFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": true
+ },
+ "SimpleTextureScaleToSDRFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": true
+ },
+ "SimpleTextureFragmentUV": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "SimpleTextureTintFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.6667,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "SimpleGrayscale": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": true
+ },
+ "AlphaTextureFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": true
+ },
+ "GroupFadeTextureFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.0046,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "SimpleTextureLightingFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.1965,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "StyledDebugFillFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.0521,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "RippleFragment": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "ShadowCompositeFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.1019,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "UberCompositeFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 2,
+  "mean_abs_diff": 0.4165,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 48,
+  "tolerance": 4,
+  "identical": false
+ },
+ "BlurComposite": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.2996,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 4,
+  "identical": false
+ },
+ "UberResampleLanczosFragmentBGRA": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "UberResampleLanczosFragmentYCbCr": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "ColorFillYCbCr": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "ColorFillYCbCr_ChromaOnly": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "ShadowHorizontalBlurFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.0007,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 4,
+  "identical": false
+ },
+ "ShadowVerticalBlurFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 4,
+  "identical": true
+ },
+ "ShadowVerticalBlurRGBAFragment": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 4,
+  "identical": true
+ },
+ "InPlaceSover": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.0488,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "InPlaceAlphaUnpremultiply": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.0065,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 4,
+  "identical": false
+ },
+ "InPlaceColorOrClampEDR": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.001,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 4,
+  "identical": false
+ },
+ "TextureCopy": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.318,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": false
+ },
+ "ColorFill": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 3,
+  "identical": true
+ },
+ "GPUPass": {
+  "prediction": null,
+  "why": "nirexec: one BGRA8/R8 attachment and 2D textures only"
+ },
+ "xr554_tint_none": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.1725,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 2,
+  "identical": false
+ },
+ "xr554_tint_src_alpha": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.3683,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 2,
+  "identical": false
+ },
+ "xr552_tint_premul_over": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.1082,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 2,
+  "identical": false
+ },
+ "xr552_sample_to_xr": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 0,
+  "mean_abs_diff": 0.0,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 2,
+  "identical": true
+ },
+ "xr554_sample_linear": {
+  "prediction": "llvmpipe",
+  "ok": true,
+  "max_abs_diff": 1,
+  "mean_abs_diff": 0.022,
+  "pixels_over_tolerance_inside": 0,
+  "pixels_over_tolerance_on_edges": 0,
+  "edge_budget": 24,
+  "tolerance": 2,
+  "identical": false
+ },
+ "probe_ubo_lo": {
+  "prediction": null,
+  "why": "A16 probe: analytic golden check"
+ },
+ "probe_ubo_hi": {
+  "prediction": null,
+  "why": "A16 probe: analytic golden check"
+ },
+ "probe_alias_rgb": {
+  "prediction": null,
+  "why": "A16 probe: analytic golden check"
+ },
+ "probe_alias_zw": {
+  "prediction": null,
+  "why": "A16 probe: analytic golden check"
+ },
+ "probe_fetch": {
+  "prediction": null,
+  "why": "A16 probe: analytic golden check"
+ },
+ "probe_a8": {
+  "prediction": null,
+  "why": "A16 probe: analytic golden check"
+ }
+}

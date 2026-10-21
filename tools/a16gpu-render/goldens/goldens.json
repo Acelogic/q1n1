@@ -1,0 +1,571 @@
+{
+  "device" : "Apple M3 Max",
+  "format" : 1,
+  "frame_written" : 2,
+  "frames" : 3,
+  "goldens" : [
+    {
+      "digest" : "64ad4eac16e4e0d4639a4b4ca5dcf73d8e2a8b19168e121d8a840c08e89c3e19",
+      "name" : "SimpleColorFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4968,
+          "file" : "SimpleColorFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "7bfd4d4b7c35fe0bdb6e1913bad76c56288fa433f5ad8f33caf52d2f5f7cea81"
+        }
+      ]
+    },
+    {
+      "digest" : "d35bebde735bc985f57bdff13929a42e339f8399b73c4d8c8bbd9969fe404ca9",
+      "name" : "SimpleTextureFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 1964,
+          "file" : "SimpleTextureFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "1939a3844f5a222e5635a80a5b9e360e0f471ec901d81ca541262275ccb31595"
+        }
+      ]
+    },
+    {
+      "digest" : "7b64e6a2e412af404709b6d50c06ff92de0afd6e05a48771eb6282a156b7542d",
+      "name" : "SimpleTextureEDRFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2189,
+          "file" : "SimpleTextureEDRFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "aafa25e27c03f6395f8e17a791bfdb0f4da1416fccd457642a5f218b59275ca4"
+        }
+      ]
+    },
+    {
+      "digest" : "ff05d47ac6f22f361c54ddb2684c3f3167e4b86a009768ee1dcfaef8d43ad139",
+      "name" : "SimpleTextureScaleToSDRFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4257,
+          "file" : "SimpleTextureScaleToSDRFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "d127e70d7874365cab362366701df5c188eb6e6e42f43c86a1e9b2756eabe4bf"
+        }
+      ]
+    },
+    {
+      "digest" : "ad3e18475e064465d1461bd553d20f3dbb11bf0a46d6dc6fe198d325c4e4bc1d",
+      "name" : "SimpleTextureFragmentUV",
+      "rts" : [
+        {
+          "bytes" : 12288,
+          "distinct_values" : 3576,
+          "file" : "SimpleTextureFragmentUV.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "4c2054048c009f9b5b7fe3c2fb7759a290cdc58fd5d50232241e1dd95bc2f016"
+        }
+      ]
+    },
+    {
+      "digest" : "dca1233a47932527ddfbc763b3772d3df6747b2d9ff7f5e5ee6fc62e28ee740d",
+      "name" : "SimpleTextureTintFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2110,
+          "file" : "SimpleTextureTintFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "ce33534c70159c50a8e42de3d56a7553ee6c329e032f53692805f647649ceccd"
+        }
+      ]
+    },
+    {
+      "digest" : "1b4d0bf73ba282584b8304ec8a843e5e27431fd27b0e364f0d83d17bdee12db8",
+      "name" : "SimpleGrayscale",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 746,
+          "file" : "SimpleGrayscale.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "ec288f007677963a2760daac0bdae30c1b3618eaed9e7918598667bb1b8687d2"
+        }
+      ]
+    },
+    {
+      "digest" : "684e2bfc2b4678355855996f2b4a67fdaeec714801fd317136ea4421adef8a8e",
+      "name" : "AlphaTextureFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 337,
+          "file" : "AlphaTextureFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 5120,
+          "sha256" : "a98c520d0f84f1dc874940111f22ae6a142e8d355798bd2047b1951b5fab4ef3"
+        }
+      ]
+    },
+    {
+      "digest" : "f53d27702e458449a34b181c749881ecc064b0c3cd7a18e22480ccb6b4648a56",
+      "name" : "GroupFadeTextureFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 1425,
+          "file" : "GroupFadeTextureFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "df17c327f2449e68a1eabed13dd5b73e5a623bde1e8ab24e2823b310a194aff7"
+        }
+      ]
+    },
+    {
+      "digest" : "0af1a4509bc99dc3a1d9774484f8d1147adf68f2d20d56c6e126ff05b0f7e708",
+      "name" : "SimpleTextureLightingFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 1959,
+          "file" : "SimpleTextureLightingFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4320,
+          "sha256" : "aecfae79033e51edb291b9547dc1c0125fe6c141fa2066e21afc0350d847a042"
+        }
+      ]
+    },
+    {
+      "digest" : "0bb2ea491c73ff209d1a740cb8573517cf01bc2e1a53dd844375663b0f859f6a",
+      "name" : "StyledDebugFillFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2704,
+          "file" : "StyledDebugFillFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "fc825d5b755aca857b18de2dd2a4eb044903722e04f18da42b4128b7e36f574b"
+        }
+      ]
+    },
+    {
+      "digest" : "8533c9fad5ebc99c09d47c7646cea46a530cfc9f86a09e5d4bc91c988a0a2699",
+      "name" : "RippleFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4399,
+          "file" : "RippleFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "7c78803aebfd91e640d51cde8cf7a8e4c7c7b7e100e6d30c402ea9e57e6b5613"
+        }
+      ]
+    },
+    {
+      "digest" : "21067c1e4b339bd8737b723495976394af7dd2b6e9c449e0b56c6857b7a27a1a",
+      "name" : "ShadowCompositeFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2093,
+          "file" : "ShadowCompositeFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 2684,
+          "sha256" : "7d40ef00f456b87e45904553d6bd1f184f23957397b50ac88dc038106826016f"
+        }
+      ]
+    },
+    {
+      "digest" : "e829551b50eeaf34f24f356ef5b50c4d11449a6ff33092d2d1db7992234f14d5",
+      "name" : "UberCompositeFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2528,
+          "file" : "UberCompositeFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 3940,
+          "sha256" : "2034631207b096a36d666f184a23ae63c2f11db0f395147a590b07ec1611e0d3"
+        }
+      ]
+    },
+    {
+      "digest" : "3ff2b28a4fd2c4a674b8841b5614bc46641ccf1f812c5763bbdec4070aa507d6",
+      "name" : "BlurComposite",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2523,
+          "file" : "BlurComposite.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "2ba75068c8befe4eaad829ed84b071761c956baf93e7e1e0634ff4f2b78a1719"
+        }
+      ]
+    },
+    {
+      "digest" : "b916510386caa4f6f9e9d04df41dcce15a590c9152daee91d01d2db0cb0c7dab",
+      "name" : "UberResampleLanczosFragmentBGRA",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 3686,
+          "file" : "UberResampleLanczosFragmentBGRA.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 3072,
+          "sha256" : "74aff63d317d598df2961843825738fd223d12664cea4750c3b3087ceec12290"
+        }
+      ]
+    },
+    {
+      "digest" : "b0d679cf6714dbcc616a2b4b21ef7afa089b56d543d4358e26d115b9494708c1",
+      "name" : "UberResampleLanczosFragmentYCbCr",
+      "rts" : [
+        {
+          "bytes" : 6144,
+          "distinct_values" : 163,
+          "file" : "UberResampleLanczosFragmentYCbCr.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 3052,
+          "sha256" : "aa2eec291ea5a18c78c63cf7db60db8147a743b855bbbed2d6298ec877978719"
+        },
+        {
+          "bytes" : 12288,
+          "distinct_values" : 2395,
+          "file" : "UberResampleLanczosFragmentYCbCr.rt1.raw",
+          "index" : 1,
+          "pixels_changed_by_draw" : 3072,
+          "sha256" : "3a5598741a7c719909331558fec9bf121b88c1a10aa2d3db410a339cdac47dca"
+        }
+      ]
+    },
+    {
+      "digest" : "ccaaf4663b1434bb9783fe633e6ba8da11b843013ba6d125443ef3ef1acbb962",
+      "name" : "ColorFillYCbCr",
+      "rts" : [
+        {
+          "bytes" : 6144,
+          "distinct_values" : 163,
+          "file" : "ColorFillYCbCr.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4440,
+          "sha256" : "b5b8ca3aa83194997442f96109fdce9027f582c7517621e14eac2f9ab8b0baa4"
+        },
+        {
+          "bytes" : 12288,
+          "distinct_values" : 4121,
+          "file" : "ColorFillYCbCr.rt1.raw",
+          "index" : 1,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "635d48774da13172e380f90c4a62ba54171c665bca544a35cfdc7408e7afd385"
+        }
+      ]
+    },
+    {
+      "digest" : "a879fdc3bc6e12b8391182e8bb2a982e4b1a65f9c011a5e910deb4f37ad6d011",
+      "name" : "ColorFillYCbCr_ChromaOnly",
+      "rts" : [
+        {
+          "bytes" : 12288,
+          "distinct_values" : 4121,
+          "file" : "ColorFillYCbCr_ChromaOnly.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "635d48774da13172e380f90c4a62ba54171c665bca544a35cfdc7408e7afd385"
+        }
+      ]
+    },
+    {
+      "digest" : "1d1b621b9db82b51a00ba009b0d3faf6d8fcf1d6a7f836c05856beb255492715",
+      "name" : "ShadowHorizontalBlurFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 670,
+          "file" : "ShadowHorizontalBlurFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "1a54f5bb8081d64ec3b33cb6436ec0a5017e0f00fad19e8782611e567d1a34a6"
+        }
+      ]
+    },
+    {
+      "digest" : "18ba629a5700f8d0cfb256b6e4dac65f1556cbf1bc04fa0bedb493380ac1f714",
+      "name" : "ShadowVerticalBlurFragment",
+      "rts" : [
+        {
+          "bytes" : 6144,
+          "distinct_values" : 114,
+          "file" : "ShadowVerticalBlurFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4094,
+          "sha256" : "b0b5aad51818ab143649504d1403696af7e40a41a164b98436abe9c0de24d5d9"
+        }
+      ]
+    },
+    {
+      "digest" : "51e1353f7b9eb053d07b831bada5a464b485131a213b4a0129247f17d1bb4f40",
+      "name" : "ShadowVerticalBlurRGBAFragment",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 639,
+          "file" : "ShadowVerticalBlurRGBAFragment.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "e30a9e07527061cd86a0124cd4fb61a702b721fe36751a88a7e3a90d695e8f6e"
+        }
+      ]
+    },
+    {
+      "digest" : "d81b070db49030181bbb71ddf44aa991ffd86e804d31ed0faa119c409adbf5bd",
+      "name" : "InPlaceSover",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4475,
+          "file" : "InPlaceSover.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "a26d1ddc8126b601cd9b1b0ece80e4351d64af100aaf3fd32702ae4d2082ffcd"
+        }
+      ]
+    },
+    {
+      "digest" : "e39d4a00fd1875564dc5281da6b7069813933b47b39b31fdf3a24e2b4af94cab",
+      "name" : "InPlaceAlphaUnpremultiply",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4627,
+          "file" : "InPlaceAlphaUnpremultiply.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 3776,
+          "sha256" : "3d368ea8db927eb9e7a5958990e5dbbf522bca0ffe8f2740118066bfcd681f4a"
+        }
+      ]
+    },
+    {
+      "digest" : "ca0928a22720441ac6726261f332163a74f0f7cf18939a2b858b5d9cad191fda",
+      "name" : "InPlaceColorOrClampEDR",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2444,
+          "file" : "InPlaceColorOrClampEDR.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 3338,
+          "sha256" : "d2e7a5b26d6e2c7803389a3a0b9e5fa107057b37f2320075c9084ca0e38741c8"
+        }
+      ]
+    },
+    {
+      "digest" : "000a6ded0b0721e36b812dd0472a9d512d0c2e3fb32acb46bbb22ba772080c1b",
+      "name" : "TextureCopy",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4673,
+          "file" : "TextureCopy.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "91cdb39bdcfc3823c4e4901540d80c357689f1c1dbff241f87fd1c387af71d2a"
+        }
+      ]
+    },
+    {
+      "digest" : "e49c9afb23cbe2e43ae464705bc3c797447203b416a79687322067ca7b791ca1",
+      "name" : "ColorFill",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 1049,
+          "file" : "ColorFill.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 2464,
+          "sha256" : "7f9ace1113d69de2ba17920774bafd663ee1e5fd151927a9123464aa8ae510b6"
+        }
+      ]
+    },
+    {
+      "digest" : "de3ea627606b595fd6a28e49c3f25f050037275384f840ce3fd7a75bd18ca34f",
+      "name" : "GPUPass",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4639,
+          "file" : "GPUPass.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "7ef70779193a09d04dd5461de45915ca03c4ad3cb3de60067477934c73506c04"
+        }
+      ]
+    },
+    {
+      "digest" : "e79dbb2758d18762607e9b70913100512e33be505612d3bcda8c4ec3768afb62",
+      "name" : "xr554_tint_none",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2811,
+          "file" : "xr554_tint_none.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "ebe8136ab22c4be8f51bbfbc8e38f8c84fe716ea245a9aa6241f6e7434f6ab15"
+        }
+      ]
+    },
+    {
+      "digest" : "9cf11dc9a27f7b81a37ecb17923a67dd52308226b4d8f17f8d4ac024f3dc72d8",
+      "name" : "xr554_tint_src_alpha",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4913,
+          "file" : "xr554_tint_src_alpha.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4072,
+          "sha256" : "6431b2cc1b9815122032dabb954a84ab4323fb4c1da89d5e631ce75752af6278"
+        }
+      ]
+    },
+    {
+      "digest" : "2ae68a5844668a688d36ad1dc358b1b44c096e2cce0e64249de2fc143f66c0a2",
+      "name" : "xr552_tint_premul_over",
+      "rts" : [
+        {
+          "bytes" : 49152,
+          "distinct_values" : 4306,
+          "file" : "xr552_tint_premul_over.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4072,
+          "sha256" : "7180f3ce4bf7e5419042ba1611648faedd6c0fc10f0fc0639180bd235c1d3d50"
+        }
+      ]
+    },
+    {
+      "digest" : "f1b3f982f49059f9791296f4efa4068242a78da755e17e8d23dcd7c26c176663",
+      "name" : "xr552_sample_to_xr",
+      "rts" : [
+        {
+          "bytes" : 49152,
+          "distinct_values" : 6144,
+          "file" : "xr552_sample_to_xr.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "de2a5b21921527f790f6184447cf945af6888bf6fc3976b264e6dab870e9069e"
+        }
+      ]
+    },
+    {
+      "digest" : "dcacc420a7dc571c815e6d6299e2b4c12666628b25500774df1b7ffe65d6f46b",
+      "name" : "xr554_sample_linear",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 2069,
+          "file" : "xr554_sample_linear.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4480,
+          "sha256" : "1a648f1a73aebc733f04e88bec03d557fb369f04f88c5ca3d8c18c736e7688f2"
+        }
+      ]
+    },
+    {
+      "digest" : "5f3bf00273a933f039dae863059e18b4bd5bb0fefdca5d0c3f25eb7b3974e810",
+      "name" : "probe_ubo_lo",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 16,
+          "file" : "probe_ubo_lo.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 6144,
+          "sha256" : "554a0639cd0982909031c877c2164a11021a087dee8a97a6389489c6050dc0ba"
+        }
+      ]
+    },
+    {
+      "digest" : "cf0f83f0ac851579802076a2a3b973ae69a93ddec73fea1c67face91ca953ad6",
+      "name" : "probe_ubo_hi",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 15,
+          "file" : "probe_ubo_hi.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 6144,
+          "sha256" : "ba5e4f3c3837331c3f889335daf77aace166cc413369b99445c5de79b242e651"
+        }
+      ]
+    },
+    {
+      "digest" : "39c6c42250683d976e37713e0a0c03dccbf824171ea12289fd4aaafef5dc5612",
+      "name" : "probe_alias_rgb",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 96,
+          "file" : "probe_alias_rgb.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 6144,
+          "sha256" : "34356119fae40c09c3a30c72a1e44b30c4264137a8ae5f19d34d4b4f112e2ea7"
+        }
+      ]
+    },
+    {
+      "digest" : "6d2838e2cdf0033436cde097dc00fd3d862ae71572d5dd626080c76bee6c232c",
+      "name" : "probe_alias_zw",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 6144,
+          "file" : "probe_alias_zw.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 6144,
+          "sha256" : "c07294ae9b1f65f40556e6540fd3777c4c8609c7887df076dfce3924d13b624b"
+        }
+      ]
+    },
+    {
+      "digest" : "4b3f5f296265b8b43ea386fbbf9be38c27a6c85dd3b0a623c3432df92e966100",
+      "name" : "probe_fetch",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 4620,
+          "file" : "probe_fetch.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4017,
+          "sha256" : "8da11b893dea67ddaebfc4de2d01953f4561fa3dd40c6c0185620bd9d8be19a0"
+        }
+      ]
+    },
+    {
+      "digest" : "0b47cbb676f7ddbf471472b43356535212ccf324831b63a141c752702bcebcbe",
+      "name" : "probe_a8",
+      "rts" : [
+        {
+          "bytes" : 24576,
+          "distinct_values" : 832,
+          "file" : "probe_a8.rt0.raw",
+          "index" : 0,
+          "pixels_changed_by_draw" : 4096,
+          "sha256" : "8970cc1a6fd91f0bd48ababe838ef12f2ef37def03b955b8ae71a8e38c81896d"
+        }
+      ]
+    }
+  ],
+  "os" : "Version 27.0 (Build 26A428)"
+}
