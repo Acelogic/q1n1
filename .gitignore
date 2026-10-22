@@ -15,7 +15,6 @@ __pycache__
 *.dSYM/
 
 # Agent instruction files are not part of this repository.
-AGENTS.md
 CLAUDE.md
 GEMINI.md
 
